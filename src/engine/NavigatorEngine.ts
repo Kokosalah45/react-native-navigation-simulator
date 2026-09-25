@@ -7,7 +7,7 @@ import type {
   RouteVerdict,
 } from './types';
 import type { BlueprintIndex } from './blueprint';
-import { hydrateNested } from './blueprint';
+import { hydrateNested, navIdFromKey } from './blueprint';
 import { isDrawerOpen, routerFor, type RouterContext } from './routers';
 
 /**
@@ -58,8 +58,13 @@ export function focusedRoute(root: NavState): RouteState {
  * navigator is not currently mounted. Used to dispatch an action from a
  * navigator other than the focused one - the simulator's `getParent()`.
  */
+/**
+ * `navKey` may be an instance key or a navigator id: getParent() takes the id,
+ * and with two instances mounted that names the first one found, exactly as
+ * an ambiguous id would in a real app.
+ */
 export function navigatorPath(root: NavState, navKey: string): NavState[] | null {
-  if (root.key === navKey) return [root];
+  if (root.key === navKey || navIdFromKey(root.key) === navKey) return [root];
   for (const route of root.routes) {
     if (!route.state) continue;
     const below = navigatorPath(route.state, navKey);

@@ -1,5 +1,6 @@
 import type { NavAction } from '../engine/types';
 import type { SessionState } from '../engine/session';
+import { getNavigatorBlueprint } from '../engine/blueprint';
 import { PREVIEW_ACTIONS, type CallShapeInfo, type Resolution } from '../engine/resolve';
 import { CodeLine } from './CodeBlock';
 import { InfoTip, Tooltip } from './Tooltip';
@@ -69,7 +70,7 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
       {/* bubbling trace, leaf first */}
       <div className="mb-2 space-y-1">
         {trace.map((step) => {
-          const routeNames = session.idx.navigators.get(step.navKey)?.screens.map((s) => s.name) ?? [];
+          const routeNames = getNavigatorBlueprint(session.idx, step.navKey)?.screens.map((s) => s.name) ?? [];
           return (
             <Tooltip
               key={step.navKey}

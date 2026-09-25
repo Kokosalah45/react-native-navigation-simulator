@@ -37,8 +37,12 @@ export interface Preset {
   blueprint: NavigatorBlueprint;
 }
 
-/** Navigator keys are derived from the blueprint id so the UI stays readable. */
-export const navKeyOf = (bp: NavigatorBlueprint) => `${bp.type}-${bp.id}`;
+/**
+ * A navigator's *id* is stable and comes from the layout. It is what
+ * `getParent('id')` addresses, and what the blueprint index is keyed by.
+ * It is NOT the navigator's state key - see `makeNavKey`.
+ */
+export const navIdOf = (bp: NavigatorBlueprint) => `${bp.type}-${bp.id}`;
 
 /* ------------------------------------------------------------------ */
 /* Key generation                                                      */
@@ -50,6 +54,27 @@ export const resetKeyCounter = () => {
 };
 /** Mirrors React Navigation's `${name}-${uniqueId}` route keys. */
 export const makeRouteKey = (name: string) => `${name}-${(keyCounter++).toString(36)}`;
+
+/**
+ * A navigator's *key* identifies one mounted instance, not one layout entry.
+ *
+ * Pushing a second copy of a screen that renders a navigator mounts a second
+ * navigator, with its own routes and its own index, so the key cannot come
+ * from the layout: the docs describe it as a "unique key to identify the
+ * navigator", generated the same way route keys are. Deriving it from the
+ * blueprint instead made two instances collide on one key - they shared a
+ * node in the visualizer, and getParent() could only ever find the first.
+ *
+ * The id stays in front of the counter so the key is still readable, and so
+ * the layout can be looked back up from it.
+ */
+export const makeNavKey = (bp: NavigatorBlueprint) => `${navIdOf(bp)}#${(keyCounter++).toString(36)}`;
+
+/** The stable id behind an instance key. Safe to pass either one. */
+export const navIdFromKey = (key: string) => {
+  const hash = key.indexOf('#');
+  return hash === -1 ? key : key.slice(0, hash);
+};
 
 /**
  * Save/restore around a speculative dispatch. Predicting what an action WOULD
@@ -79,21 +104,28 @@ export interface BlueprintIndex {
 export function indexBlueprint(bp: NavigatorBlueprint, index?: BlueprintIndex): BlueprintIndex {
   const idx: BlueprintIndex =
     index ?? { navigators: new Map(), screens: new Map(), ownerOf: new Map(), parents: new Map() };
-  const navKey = navKeyOf(bp);
+  const navKey = navIdOf(bp);
   idx.navigators.set(navKey, bp);
   for (const screen of bp.screens) {
     idx.screens.set(`${navKey}::${screen.name}`, screen);
     if (!idx.ownerOf.has(screen.name)) idx.ownerOf.set(screen.name, navKey);
     if (screen.nested) {
-      idx.parents.set(navKeyOf(screen.nested), { parentNav: navKey, screen: screen.name });
+      idx.parents.set(navIdOf(screen.nested), { parentNav: navKey, screen: screen.name });
       indexBlueprint(screen.nested, idx);
     }
   }
   return idx;
 }
 
-export const getScreenBlueprint = (idx: BlueprintIndex, navKey: string, name: string) =>
-  idx.screens.get(`${navKey}::${name}`);
+/* The index is keyed by navigator id, so every lookup accepts an instance
+   key just as happily as the id itself. */
+export const getScreenBlueprint = (idx: BlueprintIndex, nav: string, name: string) =>
+  idx.screens.get(`${navIdFromKey(nav)}::${name}`);
+
+export const getNavigatorBlueprint = (idx: BlueprintIndex, nav: string) =>
+  idx.navigators.get(navIdFromKey(nav));
+
+export const getParentLink = (idx: BlueprintIndex, nav: string) => idx.parents.get(navIdFromKey(nav));
 
 /* ------------------------------------------------------------------ */
 /* State construction                                                  */
@@ -123,12 +155,12 @@ export function buildInitialState(bp: NavigatorBlueprint): NavState {
 
   if (bp.type === 'stack') {
     const route = makeRoute(bp.screens[initialIndex]);
-    return { key: navKeyOf(bp), type: 'stack', index: 0, routeNames, routes: [route], stale: false };
+    return { key: makeNavKey(bp), type: 'stack', index: 0, routeNames, routes: [route], stale: false };
   }
 
   const routes = bp.screens.map((s) => makeRoute(s));
   return {
-    key: navKeyOf(bp),
+    key: makeNavKey(bp),
     type: bp.type,
     index: initialIndex,
     routeNames,

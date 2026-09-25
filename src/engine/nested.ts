@@ -1,5 +1,5 @@
 import type { NavState, Params } from './types';
-import type { BlueprintIndex } from './blueprint';
+import { getParentLink, type BlueprintIndex } from './blueprint';
 
 /**
  * Nested navigation.
@@ -103,7 +103,7 @@ export function pathToScreen(idx: BlueprintIndex, navKey: string, name: string):
   let key: string | undefined = navKey;
 
   for (let guard = 0; guard < 16 && key; guard++) {
-    const parent = idx.parents.get(key);
+    const parent = getParentLink(idx, key);
     if (!parent) break;
     hops.unshift({ name: parent.screen, navKey: parent.parentNav });
     key = parent.parentNav;

@@ -1,5 +1,5 @@
 import type { NavAction, NavState, Params } from './types';
-import { restoreKeyCounter, snapshotKeyCounter } from './blueprint';
+import { navIdFromKey, restoreKeyCounter, snapshotKeyCounter } from './blueprint';
 import { dispatch, focusedNavigators, navigatorPath } from './NavigatorEngine';
 import { describeAction, type SessionState } from './session';
 import { buildPayload, collectNavKeys, junctionOf, pathToScreen, trimToReachable, type NestedHop } from './nested';
@@ -173,7 +173,9 @@ export function resolveTarget(
   const sourceResolved = sourceNav ? sourcePath !== null : true;
   const chain = sourcePath ?? focusedNavigators(session.root);
   const leafFirst = [...chain].reverse();
-  const startNav = leafFirst[0]?.key ?? 'the focused navigator';
+  // Geometry below is reasoned about in navigator-id space: which branch hangs
+  // off which is a property of the layout, not of a particular instance.
+  const startNav = leafFirst[0] ? navIdFromKey(leafFirst[0].key) : 'the focused navigator';
   const effectiveSource = sourceResolved ? sourceNav : undefined;
 
   const bareAction = spec.build(targetName, params);
@@ -194,11 +196,13 @@ export function resolveTarget(
 
   /* ---- the nested alternative, where the action supports one ---- */
 
-  const chainKeys = new Set(chain.map((nav) => nav.key));
+  const chainIds = new Set(chain.map((nav) => navIdFromKey(nav.key)));
   const full = ownerNavKey ? pathToScreen(session.idx, ownerNavKey, targetName) : [{ name: targetName, navKey: '' }];
-  const path = trimToReachable(full, chainKeys);
-  const junction = junctionOf(full, chainKeys);
-  const ownerMounted = ownerNavKey ? collectNavKeys(session.root).has(ownerNavKey) : false;
+  const path = trimToReachable(full, chainIds);
+  const junction = junctionOf(full, chainIds);
+  const ownerMounted = ownerNavKey
+    ? [...collectNavKeys(session.root)].some((key) => navIdFromKey(key) === ownerNavKey)
+    : false;
 
   let nested: CallShapeInfo | null = null;
   if (spec.supportsNested && path.length > 1) {

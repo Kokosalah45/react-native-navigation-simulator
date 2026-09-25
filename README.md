@@ -146,6 +146,12 @@ other columns may take.
   stays mounted. Stack routes are mounted for as long as they are in the array.
 - **Nested state is created on mount.** A route has no `state` property until the navigator
   it renders actually mounts, which is exactly why v6's nested `navigate` was unreliable.
+- **Navigator keys identify an instance, not a layout entry.** Push a second copy of a screen
+  that renders a navigator and you get a second navigator, with its own routes and its own
+  index. Keys are written `tab-main#4`: the stable id in front, so `getParent('tab-main')`
+  still reads the way it does in your code, and an instance counter behind it. Given an
+  ambiguous id, `getParent` resolves to the first matching instance — as it would in a real
+  app.
 - **Lifecycle ordering.** Mounts, then blurs, then focuses, then unmounts — the order the
   hooks fire in.
 - **`setParams` is immutable.** A new route object and a new state object; the key is

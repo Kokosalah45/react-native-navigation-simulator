@@ -1,6 +1,6 @@
 import type { NavAction, NavState, Params, RouteState, RouteVerdict } from './types';
 import type { BlueprintIndex } from './blueprint';
-import { getScreenBlueprint, makeRoute } from './blueprint';
+import { getNavigatorBlueprint, getScreenBlueprint, makeRoute } from './blueprint';
 import type { EngineOptions } from './types';
 
 /**
@@ -141,7 +141,7 @@ function handleSetParams(state: NavState, params: Params, replace: boolean): Rou
 /* ------------------------------------------------------------------ */
 
 const backBehaviorOf = (state: NavState, ctx: RouterContext) =>
-  ctx.idx.navigators.get(state.key)?.backBehavior ?? 'firstRoute';
+  getNavigatorBlueprint(ctx.idx, state.key)?.backBehavior ?? 'firstRoute';
 
 const BEHAVIOR_NOTE: Record<string, string> = {
   firstRoute: 'the first screen declared on the navigator',
@@ -165,7 +165,7 @@ function resolveBackTarget(state: NavState, ctx: RouterContext): { index: number
       return state.index > 0 ? { index: state.index - 1 } : null;
 
     case 'initialRoute': {
-      const bp = ctx.idx.navigators.get(state.key);
+      const bp = getNavigatorBlueprint(ctx.idx, state.key);
       const name = bp?.initialRouteName ?? state.routeNames[0];
       const index = Math.max(0, state.routeNames.indexOf(name));
       return index === state.index ? null : { index };
