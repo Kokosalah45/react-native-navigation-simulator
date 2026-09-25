@@ -278,4 +278,39 @@ export const SECTIONS: Section[] = [
   },
 ];
 
+SECTIONS.push({
+  id: 'E',
+  title: 'Session coach',
+  blurb:
+    'The "session" view in the console reads the whole run back. No single dispatch looks wrong on its own, so the rules only fire on patterns across several.',
+  scenarios: [
+    {
+      id: 'E1',
+      title: 'It names a duplicated branch',
+      steps: [
+        'On a root stack holding sibling flows, navigate into flow A, then flow B, then back to flow A',
+        'Open the "session" tab in the console',
+      ],
+      expect:
+        'A warning: "You created a second <name>", naming the dispatches that did it, with popTo / { pop: true } as the fix. The journal shows root depth climbing 2 → 3 → 4 and marks the offending row "2nd <name>".',
+      why: 'This is the pattern behind nearly all the "why do I have two of these" confusion, and it is invisible one dispatch at a time.',
+    },
+    {
+      id: 'E2',
+      title: 'It distinguishes growing from switching',
+      steps: ['Keep bouncing between sections, then use popTo and a few tab switches'],
+      expect:
+        'Warnings for the pushes ("root stack is being used to switch between sections"), and green confirmations for the calls that did not grow it — "rolled the stack back instead of growing it" and "switches handled by a tab or drawer". Warnings sort above info above good.',
+    },
+    {
+      id: 'E3',
+      title: 'pop: true is visible on the button',
+      steps: ['In v7, tick the "pop: true" modifier'],
+      expect:
+        "The navigate button's label becomes navigate('Name', { pop: true }) — the flag is never silently on. The checkbox is hidden in v6, where navigate already unwinds.",
+      why: 'The modifier existed but nothing on the button reflected it, so it was easy to tick and not notice.',
+    },
+  ],
+});
+
 export const TOTAL = SECTIONS.reduce((n, s) => n + s.scenarios.length, 0);

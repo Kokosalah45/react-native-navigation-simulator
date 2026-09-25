@@ -421,7 +421,7 @@ export function AppSimulator() {
           )}
 
           <div className={`flex min-h-0 flex-col overflow-hidden ${wide ? '' : 'min-h-[320px]'}`}>
-            <EventLog log={session.log} onClear={() => send({ type: 'clearLog' })} />
+            <EventLog log={session.log} session={session} onClear={() => send({ type: 'clearLog' })} />
           </div>
         </div>
         )}

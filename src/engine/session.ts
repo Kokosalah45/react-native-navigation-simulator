@@ -61,6 +61,31 @@ export interface LastChange {
   source?: string;
 }
 
+/**
+ * One dispatch, kept so the session can be read back as a whole.
+ *
+ * The lifecycle console answers "what did this action do?". This answers
+ * "what have I been doing?", which is the question behind most of the
+ * duplicate-branch confusion - no single dispatch looks wrong.
+ */
+export interface JourneyEntry {
+  seq: number;
+  /** The call as written, e.g. navigate('Tabs', { screen: 'Home' }). */
+  code: string;
+  actionType: NavAction['type'];
+  /** navigate() carrying the v7 `pop` option. */
+  popOption: boolean;
+  handledBy: string | null;
+  handledByType: NavState['type'] | null;
+  error?: string;
+  kind: 'mount' | 'unmount' | 'swap' | 'focus' | 'none';
+  /** Route name this dispatch added a SECOND live copy of, if any. */
+  duplicated?: string;
+  rootDepth: number;
+  /** Which root-level route was focused afterwards - the "section" you are in. */
+  rootFocusName: string | null;
+}
+
 export interface SessionState {
   version: RNVersion;
   preset: Preset;
@@ -73,6 +98,7 @@ export interface SessionState {
   verdicts: Record<string, RouteVerdict>;
   ghosts: Ghost[];
   log: LogEntry[];
+  journey: JourneyEntry[];
   last: LastChange | null;
   tick: number;
   logSeq: number;
@@ -210,6 +236,7 @@ export function initSession(preset: Preset, version: RNVersion, overrides?: Part
     verdicts: {},
     ghosts: [],
     log: [],
+    journey: [],
     last: null,
     tick: 0,
     logSeq: 0,
@@ -508,6 +535,17 @@ export function previewLifecycle(state: SessionState, action: NavAction, source?
 
 /* ------------------------------------------------------------------ */
 
+/** The type of the navigator with this key, for reading the journal back. */
+function navTypeOf(state: NavState, key: string): NavState['type'] | undefined {
+  if (state.key === key) return state.type;
+  for (const route of state.routes) {
+    if (!route.state) continue;
+    const found = navTypeOf(route.state, key);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 function runAction(state: SessionState, action: NavAction, label?: string, source?: string): SessionState {
   const tick = state.tick + 1;
   const actionLabel = label ?? describeAction(action);
@@ -537,6 +575,21 @@ function runAction(state: SessionState, action: NavAction, label?: string, sourc
       ...state,
       tick,
       ...after,
+      journey: [
+        ...state.journey,
+        {
+          seq: state.journey.length + 1,
+          code: actionLabel,
+          actionType: action.type,
+          popOption: action.type === 'NAVIGATE' && action.payload.pop === true,
+          handledBy: null,
+          handledByType: null,
+          error: message,
+          kind: 'none',
+          rootDepth: state.root.routes.length,
+          rootFocusName: state.root.routes[state.root.index]?.name ?? null,
+        },
+      ],
       verdicts: {},
       ghosts: [],
       last: {
@@ -602,10 +655,40 @@ function runAction(state: SessionState, action: NavAction, label?: string, sourc
 
   const after = appendLog({ ...state, tick }, drafts);
 
+  const rootFocus = root.routes[root.index];
+  const added = out.verdicts.filter((v) => v.outcome === 'added');
+  // A duplicate is only interesting when the copy it duplicates is still live:
+  // pushing onto an empty slot is not the same mistake as pushing over yourself.
+  const counts = new Map<string, number>();
+  for (const [, entry] of nextNames) counts.set(entry.route.name, (counts.get(entry.route.name) ?? 0) + 1);
+  const duplicated = added.find((v) => (counts.get(v.name) ?? 0) > 1)?.name;
+
+  const entry: JourneyEntry = {
+    seq: state.journey.length + 1,
+    code: actionLabel,
+    actionType: action.type,
+    popOption: action.type === 'NAVIGATE' && action.payload.pop === true,
+    handledBy: out.handledBy,
+    handledByType: out.handledBy ? (navTypeOf(root, out.handledBy) ?? null) : null,
+    kind: events.some((e) => e.kind === 'unmount')
+      ? events.some((e) => e.kind === 'mount')
+        ? 'swap'
+        : 'unmount'
+      : events.some((e) => e.kind === 'mount')
+        ? 'mount'
+        : events.length
+          ? 'focus'
+          : 'none',
+    duplicated,
+    rootDepth: root.routes.length,
+    rootFocusName: rootFocus?.name ?? null,
+  };
+
   return {
     ...state,
     tick,
     root,
+    journey: [...state.journey, entry],
     mounted: [...out.mounted],
     focused: [...out.focused],
     everFocused: [...out.everFocused],

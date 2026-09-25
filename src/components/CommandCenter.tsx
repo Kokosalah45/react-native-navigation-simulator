@@ -290,7 +290,7 @@ export function CommandCenter({ session, dispatch }: Props) {
       {/* ---------------- stack actions ---------------- */}
       <Group title="Stack actions">
         <Cmd
-          label={`navigate('${selected}')`}
+          label={`navigate('${selected}'${popMode ? ', { pop: true }' : ''})`}
           tone="primary"
           tip={
             session.version === 'v7'
