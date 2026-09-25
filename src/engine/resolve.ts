@@ -33,6 +33,8 @@ export interface PreviewActionSpec {
   /** Only `navigate` resolves a `{ screen }` payload into a child navigator. */
   supportsNested?: boolean;
   v7Only?: boolean;
+  /** Carries `{ pop: true }` into the nested payload as well as the bare call. */
+  pop?: boolean;
   build: (name: string, params?: Params) => NavAction;
 }
 
@@ -43,6 +45,25 @@ export const PREVIEW_ACTIONS: PreviewActionSpec[] = [
     needsName: true,
     supportsNested: true,
     build: (name, params) => ({ type: 'NAVIGATE', payload: { name, params } }),
+  },
+  {
+    /**
+     * `navigate` with the v7 `pop` option: "Whether screens should be popped to
+     * navigate to a matching screen in the stack."
+     *
+     * This is the one call shape that both addresses a nested screen AND rolls
+     * the stack back to an existing branch instead of pushing a duplicate of
+     * it. popTo cannot do the first half - its second argument is screen params
+     * for the destination, not a `{ screen }` payload - so for "go back to the
+     * screen I was on, over there", this is the call.
+     */
+    id: 'navigatePop',
+    label: 'navigate + pop',
+    needsName: true,
+    supportsNested: true,
+    v7Only: true,
+    pop: true,
+    build: (name, params) => ({ type: 'NAVIGATE', payload: { name, params, pop: true } }),
   },
   { id: 'push', label: 'push', needsName: true, build: (name, params) => ({ type: 'PUSH', payload: { name, params } }) },
   {
@@ -65,6 +86,7 @@ export const getPreviewAction = (id: string) => PREVIEW_ACTIONS.find((a) => a.id
 /** Which navigator types have a handler for this action at all. */
 const ACCEPTED_BY: Record<string, NavState['type'][]> = {
   navigate: ['stack', 'tab', 'drawer'],
+  navigatePop: ['stack', 'tab', 'drawer'],
   push: ['stack'],
   popTo: ['stack'],
   replace: ['stack'],
@@ -207,7 +229,10 @@ export function resolveTarget(
   let nested: CallShapeInfo | null = null;
   if (spec.supportsNested && path.length > 1) {
     const hops = path.map((hop, i) => (i === path.length - 1 ? { ...hop, params } : hop));
-    const nestedAction: NavAction = { type: 'NAVIGATE', payload: buildPayload(hops) };
+    const nestedAction: NavAction = {
+      type: 'NAVIGATE',
+      payload: { ...buildPayload(hops), ...(spec.pop ? { pop: true } : {}) },
+    };
     // Only the first hop has to be reachable; each navigator hands the rest down.
     const firstHop = dryRun(session, { type: 'NAVIGATE', payload: { name: path[0].name } }, effectiveSource);
     nested = {

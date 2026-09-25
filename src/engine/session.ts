@@ -303,7 +303,18 @@ function computeAction(state: SessionState, action: NavAction, source?: string):
    */
   const hops: NestedHop[] = isNavigate ? flattenPayload(action.payload.name, action.payload.params) : [];
 
-  const hopAction = (hop: NestedHop, isLast: boolean): NavAction => {
+  /**
+   * The two options travel to opposite ends of a nested payload.
+   *
+   * `merge` is about the destination's params, so it belongs to the last hop.
+   * `pop` asks whether to roll the stack back to a matching screen, and the
+   * stack it means is the one that matches the name you called - the first
+   * hop. Putting it on the last hop instead made
+   * `navigate('StackA', { screen: 'Page1' }, { pop: true })` push a duplicate
+   * StackA and then pop inside the fresh child, which is the opposite of what
+   * the call asks for.
+   */
+  const hopAction = (hop: NestedHop, isFirst: boolean, isLast: boolean): NavAction => {
     if (action.type === 'NAVIGATE_DEPRECATED') {
       return { type: 'NAVIGATE_DEPRECATED', payload: { name: hop.name, params: hop.params, merge: isLast && action.payload.merge } };
     }
@@ -314,14 +325,16 @@ function computeAction(state: SessionState, action: NavAction, source?: string):
           name: hop.name,
           params: hop.params,
           merge: isLast && action.payload.merge,
-          ...(isLast && action.payload.pop ? { pop: true } : {}),
+          ...(isFirst && action.payload.pop ? { pop: true } : {}),
         },
       };
     }
     return action;
   };
 
-  const sequence: NavAction[] = hops.length ? hops.map((hop, i) => hopAction(hop, i === hops.length - 1)) : [action];
+  const sequence: NavAction[] = hops.length
+    ? hops.map((hop, i) => hopAction(hop, i === 0, i === hops.length - 1))
+    : [action];
   const nested = hops.length > 1;
 
   let settled = {

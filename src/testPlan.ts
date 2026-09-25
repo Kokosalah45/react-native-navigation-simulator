@@ -224,6 +224,17 @@ export const SECTIONS: Section[] = [
         why: 'This is what produces a stack full of duplicates when two sibling screens navigate back and forth.',
       },
       {
+        id: 'D7',
+        title: 'navigate + pop returns to a branch instead of duplicating it',
+        steps: [
+          'On A/B stacks: navigate to StackA › Page1, then to StackB › Page2',
+          "Go back with navigate('StackA', { screen: 'Page1' }, { pop: true })",
+        ],
+        expect:
+          'You land on the ORIGINAL StackA — same route key, same nested navigator key, same Page1 — and StackB is destroyed. No second StackA appears.',
+        why: 'The pop option belongs to the navigator that matches the name you called, so on a nested payload it has to apply to the FIRST hop. Applied to the last hop it pushed a duplicate StackA and then popped inside the fresh child.',
+      },
+      {
         id: 'D2',
         title: 'popTo, strict and documented',
         steps: ["popTo('Home') with strict popTo ON", 'the same call with it OFF'],
