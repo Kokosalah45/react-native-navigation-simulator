@@ -109,10 +109,38 @@ src/components/
 ## Building your own layout
 
 **Build layout** in the header opens the navigation builder, seeded from whatever preset is loaded. Add screens, pick
-each navigator's type, `initialRouteName` and `backBehavior`, and attach a nested navigator to any screen. Custom
-layouts appear under **My layouts** in the picker and run on exactly the same engine as the presets — bubbling,
-lazy mounting, `initial`, and the v6/v7 differences all behave identically, because there is no separate authoring
-format: the builder edits the same `NavigatorBlueprint` the engine executes and the codegen prints.
+each navigator's type, `initialRouteName` and `backBehavior`, and reorder or remove routes. Custom layouts appear
+under **My layouts** in the picker and run on exactly the same engine as the presets — bubbling, lazy mounting,
+`initial`, and the v6/v7 differences all behave identically, because there is no separate authoring format: the
+builder edits the same `NavigatorBlueprint` the engine executes and the codegen prints.
+
+### Adding navigators
+
+There are two ways to add one, and they produce the same tree:
+
+- **`+ navigator`** in a navigator's header appends a new route *and* the navigator it renders, in one step.
+- **`renders a navigator`** on a screen that has none attaches a navigator to that existing route.
+
+Both ask which kind to add, because the choice is not cosmetic: a tab or drawer holds every one of its routes from
+frame one and mounts them lazily on first focus, while a stack builds its history as you push.
+
+This is the part of the mental model the builder is shaped around — **a navigator is never a child of a navigator.
+It is the component of a screen:**
+
+```tsx
+const RootStack = createNativeStackNavigator({
+  screens: {
+    Tabs: TabsTabs,   // <- a navigator, rendered by the route named "Tabs"
+    Menu: MenuDrawer,
+    Details: DetailsScreen,
+  },
+});
+```
+
+So a root navigator holding several navigators is just a root whose routes happen to render them, and those route
+names are exactly what a nested payload addresses: `navigate('Menu', { screen: 'MenuHome' })`. Nesting is capped at
+6 levels, 16 navigators and 16 screens per navigator; the controls grey out at the same ceilings the validator
+enforces, with the reason on hover.
 
 ### Import / export
 

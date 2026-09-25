@@ -19,13 +19,16 @@ export const LAYOUT_VERSION = 1;
 const STORAGE_KEY = 'rn-nav-sim:layouts';
 
 /** Guard rails so a malformed or hostile file cannot wedge the app. */
-const LIMITS = {
+export const LAYOUT_LIMITS = {
   maxDepth: 6,
   maxNavigators: 16,
   maxScreensPerNavigator: 16,
   maxLabel: 60,
   maxBlurb: 240,
-};
+} as const;
+
+/** The builder greys out its controls at the same ceilings the validator enforces. */
+const LIMITS = LAYOUT_LIMITS;
 
 const NAV_TYPES: NavigatorType[] = ['stack', 'tab', 'drawer'];
 const BACK_BEHAVIORS: BackBehavior[] = ['firstRoute', 'initialRoute', 'order', 'history', 'fullHistory', 'none'];

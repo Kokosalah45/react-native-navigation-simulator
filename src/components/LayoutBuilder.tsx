@@ -3,6 +3,7 @@ import type { BackBehavior, NavigatorType } from '../engine/types';
 import type { NavigatorBlueprint, Preset, ScreenBlueprint } from '../engine/blueprint';
 import {
   type CustomLayout,
+  LAYOUT_LIMITS,
   blankLayout,
   duplicateAsCustom,
   exportLayout,
@@ -31,6 +32,28 @@ const NAV_LABEL: Record<NavigatorType, string> = {
 };
 
 const BACK_BEHAVIORS: BackBehavior[] = ['firstRoute', 'initialRoute', 'order', 'history', 'fullHistory', 'none'];
+
+const NAV_TYPES = Object.keys(NAV_LABEL) as NavigatorType[];
+
+/** Default name for the route that hosts a freshly added navigator. */
+const HOST_NAME: Record<NavigatorType, string> = { stack: 'Flow', tab: 'Tabs', drawer: 'Menu' };
+
+/**
+ * A navigator is never a child of a navigator in React Navigation - it is the
+ * *component of a screen*, i.e. `<Stack.Screen name="Tabs" component={Tabs} />`.
+ * So adding a navigator always means adding the route that renders it, and that
+ * route name is what `navigate('Tabs', { screen: ... })` addresses.
+ */
+function makeNested(root: NavigatorBlueprint, host: string, type: NavigatorType): NavigatorBlueprint {
+  return {
+    id: nextNavId(root, host.toLowerCase()),
+    type,
+    screens: [
+      { name: `${host}Home`, icon: host.charAt(0) },
+      { name: type === 'stack' ? `${host}Details` : `${host}Second`, icon: '2' },
+    ],
+  };
+}
 
 /**
  * Builds a navigator tree by hand for a proof of concept, alongside the fixed
@@ -328,11 +351,21 @@ function NavigatorEditor({
     update({ screens });
   };
 
-  const addScreen = () => {
-    const base = 'Screen';
+  const uniqueName = (base: string) => {
     let name = base;
-    for (let i = 1; nav.screens.some((s) => s.name === name); i++) name = `${base}${i + 1}`;
+    for (let i = 2; nav.screens.some((s) => s.name === name); i++) name = `${base}${i}`;
+    return name;
+  };
+
+  const addScreen = () => {
+    const name = uniqueName('Screen');
     update({ screens: [...nav.screens, { name, icon: name.charAt(0) }] });
+  };
+
+  /** Appends a route and, in the same step, the navigator it renders. */
+  const addNavigator = (type: NavigatorType) => {
+    const name = uniqueName(HOST_NAME[type]);
+    update({ screens: [...nav.screens, { name, icon: name.charAt(0), nested: makeNested(root, name, type) }] });
   };
 
   const removeScreen = (index: number) => {
@@ -352,6 +385,18 @@ function NavigatorEditor({
     [screens[index], screens[target]] = [screens[target], screens[index]];
     update({ screens });
   };
+
+  const fullScreens = nav.screens.length >= LAYOUT_LIMITS.maxScreensPerNavigator;
+  const fullNavigators = countNavigators(root) >= LAYOUT_LIMITS.maxNavigators;
+  const tooDeep = depth + 1 > LAYOUT_LIMITS.maxDepth;
+
+  const navBlocked = fullScreens
+    ? `This navigator already has ${LAYOUT_LIMITS.maxScreensPerNavigator} screens.`
+    : fullNavigators
+      ? `A layout is capped at ${LAYOUT_LIMITS.maxNavigators} navigators.`
+      : tooDeep
+        ? `Nesting is capped at ${LAYOUT_LIMITS.maxDepth} levels deep.`
+        : null;
 
   return (
     <div className={`rounded-lg border border-ink-700 bg-ink-900/60 ${depth > 0 ? 'mt-2' : ''}`}>
@@ -414,12 +459,18 @@ function NavigatorEditor({
           </label>
         )}
 
-        <button
-          onClick={addScreen}
-          className="ml-auto rounded border border-ink-700 px-2 py-0.5 text-[10px] text-ink-200 transition-colors hover:border-focus-400 hover:text-focus-400"
-        >
-          + screen
-        </button>
+        <span className="ml-auto flex items-center gap-1.5">
+          <button
+            onClick={addScreen}
+            disabled={fullScreens}
+            title={fullScreens ? `This navigator already has ${LAYOUT_LIMITS.maxScreensPerNavigator} screens.` : undefined}
+            className="rounded border border-ink-700 px-2 py-0.5 text-[10px] text-ink-200 transition-colors hover:border-focus-400 hover:text-focus-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            + screen
+          </button>
+          <AddNavigatorMenu blocked={navBlocked} onPick={addNavigator} />
+          <InfoTip label={ADD_NAV_HINT} />
+        </span>
       </div>
 
       <div className="space-y-1.5 p-2">
@@ -467,16 +518,15 @@ function ScreenEditor({
 }) {
   const [open, setOpen] = useState(false);
 
-  const addNested = () => {
-    onChange({
-      ...screen,
-      nested: {
-        id: nextNavId(root, `${screen.name.toLowerCase()}`),
-        type: 'stack',
-        screens: [{ name: `${screen.name}Home`, icon: screen.name.charAt(0) }],
-      },
-    });
-  };
+  const addNested = (type: NavigatorType) =>
+    onChange({ ...screen, nested: makeNested(root, screen.name || 'Nested', type) });
+
+  const nestBlocked =
+    countNavigators(root) >= LAYOUT_LIMITS.maxNavigators
+      ? `A layout is capped at ${LAYOUT_LIMITS.maxNavigators} navigators.`
+      : depth + 1 > LAYOUT_LIMITS.maxDepth
+        ? `Nesting is capped at ${LAYOUT_LIMITS.maxDepth} levels deep.`
+        : null;
 
   return (
     <div className="rounded-lg border border-ink-700 bg-ink-850">
@@ -504,17 +554,10 @@ function ScreenEditor({
 
         {screen.nested ? (
           <span className="mono rounded border border-focus-400/40 bg-focus-400/10 px-1.5 py-0.5 text-[9.5px] text-focus-400">
-            nested {screen.nested.type}
+            renders {NAV_LABEL[screen.nested.type].toLowerCase()} · {screen.nested.screens.length} screens
           </span>
         ) : (
-          depth < 4 && (
-            <button
-              onClick={addNested}
-              className="mono rounded border border-ink-700 px-1.5 py-0.5 text-[10px] text-ink-300 transition-colors hover:border-alive-400 hover:text-alive-400"
-            >
-              + navigator
-            </button>
-          )
+          <AddNavigatorMenu blocked={nestBlocked} label="renders a navigator" onPick={addNested} />
         )}
 
         <span className="ml-auto flex shrink-0 gap-1">
@@ -587,7 +630,9 @@ function ScreenEditor({
       {screen.nested && (
         <div className="border-t border-ink-700/60 px-2 pb-2 pt-1">
           <div className="mb-1 flex items-center gap-2">
-            <span className="mono text-[9.5px] text-ink-300">nested navigator</span>
+            <span className="mono text-[9.5px] text-ink-300">
+              rendered by <span className="text-focus-400">{screen.name}</span>
+            </span>
             <button
               onClick={() => {
                 const { nested: _drop, ...rest } = screen;
@@ -608,6 +653,73 @@ function ScreenEditor({
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+const ADD_NAV_HINT =
+  'A navigator is the component of a screen, so this adds a route and the navigator it renders in one step - the equivalent of <Stack.Screen name="Tabs" component={Tabs} />. That route name is what navigate(\'Tabs\', { screen: \'Feed\' }) addresses.';
+
+/**
+ * Picking the navigator type up front matters: a tab or drawer holds every one
+ * of its routes from frame one, while a stack builds its history as you push.
+ */
+function AddNavigatorMenu({
+  blocked,
+  label = '+ navigator',
+  onPick,
+}: {
+  blocked: string | null;
+  label?: string;
+  onPick: (type: NavigatorType) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (blocked) {
+    return (
+      <span
+        title={blocked}
+        className="mono cursor-not-allowed rounded border border-ink-800 px-1.5 py-0.5 text-[10px] text-ink-500"
+      >
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <span className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`mono rounded border px-1.5 py-0.5 text-[10px] transition-colors ${
+          open
+            ? 'border-alive-400 text-alive-400'
+            : 'border-ink-700 text-ink-300 hover:border-alive-400 hover:text-alive-400'
+        }`}
+      >
+        {label} ▾
+      </button>
+
+      {open && (
+        <>
+          <span className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <span className="absolute right-0 top-full z-20 mt-1 flex w-40 flex-col gap-0.5 rounded-md border border-ink-600 bg-ink-850 p-1 shadow-xl">
+            {NAV_TYPES.map((type) => (
+              <button
+                key={type}
+                onClick={() => {
+                  onPick(type);
+                  setOpen(false);
+                }}
+                className="rounded px-1.5 py-1 text-left text-[10.5px] text-ink-200 transition-colors hover:bg-ink-700 hover:text-alive-400"
+              >
+                {NAV_LABEL[type]}
+              </button>
+            ))}
+          </span>
+        </>
+      )}
+    </span>
   );
 }
 
