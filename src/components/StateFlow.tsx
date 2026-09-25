@@ -10,6 +10,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useStore,
   type NodeProps,
   type NodeTypes,
 } from '@xyflow/react';
@@ -17,6 +18,7 @@ import type { NavState } from '../engine/types';
 import type { SessionState } from '../engine/session';
 import {
   buildGraph,
+  type FlowDirection,
   type FlowNode,
   type GhostFlowNode,
   type NavigatorFlowNode,
@@ -39,12 +41,25 @@ const NAV_META: Record<NavState['type'], { label: string; factory: string; tone:
   drawer: { label: 'DRAWER', factory: 'createDrawerNavigator', tone: 'text-param-400 border-param-400/40 bg-param-400/10' },
 };
 
-/** Hidden, but present: an edge cannot attach without a handle. Never display:none. */
-function Ports() {
+/**
+ * Hidden, but present: an edge cannot attach without a handle, and these have
+ * to sit where `flowLayout` declared them or the edge ends would not line up.
+ * Hidden with opacity, never `display: none` - the docs are explicit that a
+ * display-hidden handle stops working.
+ */
+function Ports({ dir }: { dir: FlowDirection }) {
   return (
     <>
-      <Handle type="target" position={Position.Left} className="!h-1 !w-1 !border-0 !bg-ink-600 opacity-0" />
-      <Handle type="source" position={Position.Right} className="!h-1 !w-1 !border-0 !bg-ink-600 opacity-0" />
+      <Handle
+        type="target"
+        position={dir === 'LR' ? Position.Left : Position.Top}
+        className="!h-1 !w-1 !border-0 !bg-ink-600 opacity-0"
+      />
+      <Handle
+        type="source"
+        position={dir === 'LR' ? Position.Right : Position.Bottom}
+        className="!h-1 !w-1 !border-0 !bg-ink-600 opacity-0"
+      />
     </>
   );
 }
@@ -52,7 +67,7 @@ function Ports() {
 /* ------------------------------ navigator ------------------------------ */
 
 function NavigatorNode({ data }: NodeProps<NavigatorFlowNode>) {
-  const { state, handled, drawerOpen, onFocusChain } = data;
+  const { state, handled, drawerOpen, onFocusChain, dir } = data;
   const meta = NAV_META[state.type];
 
   return (
@@ -65,7 +80,7 @@ function NavigatorNode({ data }: NodeProps<NavigatorFlowNode>) {
             : 'border-ink-700'
       }`}
     >
-      <Ports />
+      <Ports dir={dir} />
 
       <div className="flex items-center gap-1.5">
         <Tooltip
@@ -148,7 +163,7 @@ function NavigatorNode({ data }: NodeProps<NavigatorFlowNode>) {
 /* -------------------------------- route -------------------------------- */
 
 function RouteNode({ data }: NodeProps<RouteFlowNode>) {
-  const { route, index, navType, active, isTop, focused, mounted, verdict, blurb } = data;
+  const { route, index, navType, active, isTop, focused, mounted, verdict, blurb, dir } = data;
 
   const anim =
     verdict?.outcome === 'added'
@@ -165,7 +180,7 @@ function RouteNode({ data }: NodeProps<RouteFlowNode>) {
 
   return (
     <div className={`${anim} flex h-full w-full flex-col gap-1 rounded-lg border px-2 py-1.5 ${border}`}>
-      <Ports />
+      <Ports dir={dir} />
 
       <div className="flex items-center gap-1.5">
         <Tooltip
@@ -257,10 +272,10 @@ function RouteNode({ data }: NodeProps<RouteFlowNode>) {
 /* -------------------------------- ghost -------------------------------- */
 
 function GhostNode({ data }: NodeProps<GhostFlowNode>) {
-  const { ghost } = data;
+  const { ghost, dir } = data;
   return (
     <div className="animate-dissolve flex h-full w-full flex-col gap-1 overflow-hidden rounded-lg border border-gone-400/40 bg-gone-400/[0.08] px-2 py-1.5">
-      <Ports />
+      <Ports dir={dir} />
       <div className="flex items-center gap-1.5">
         <span className="mono rounded bg-gone-400/20 px-1 py-0.5 text-[9.5px] font-semibold text-gone-400">×</span>
         <span className="truncate text-[12px] font-semibold text-gone-400 line-through">{ghost.name}</span>
@@ -300,13 +315,59 @@ const nodeTypes = {
   ghost: GhostNode,
 } as unknown as NodeTypes;
 
-const FIT_VIEW = { padding: 0.18, duration: 260, maxZoom: 1 };
+/* Fitting is done by hand rather than with fitView().
+ *
+ * fitView() waits for React Flow to consider the nodes initialized and, when
+ * the graph is rebuilt from scratch on every dispatch, that promise can simply
+ * never settle - the call then neither fits nor fails, it just hangs. The
+ * inputs are all available directly - getNodesBounds is exact and the store
+ * knows its own container - so the transform is computed here and handed to
+ * setViewport, which is unconditional.
+ *
+ * Instantly, with no duration: an animated setViewport is driven by
+ * requestAnimationFrame, which browsers throttle in a hidden tab, so the
+ * transition can stall part-way and leave the graph mis-fitted. For a panel
+ * that refits on every structural change, arriving immediately is the better
+ * behaviour regardless - there is no drift to read through. */
+const FIT_PAD = 26;
+const FIT_MIN_ZOOM = 0.2;
+const FIT_MAX_ZOOM = 1;
 
-function Flow({ session }: { session: SessionState }) {
-  const graph = useMemo(() => buildGraph(session), [session]);
+function Flow({ session, dir }: { session: SessionState; dir: FlowDirection }) {
+  const graph = useMemo(() => buildGraph(session, dir), [session, dir]);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(graph.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
-  const { fitView } = useReactFlow();
+  const { getNodes, getNodesBounds, setViewport } = useReactFlow();
+
+  // React Flow's own measurement of its container, rather than a size measured
+  // alongside it. The panel's first paint happens in the stacked layout, before
+  // the wide grid takes over, so anything captured outside the library can
+  // easily be a box the graph was never actually drawn in.
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
+
+  // Held in a ref so the refit effect does not depend on this closure's
+  // identity: any re-render in between would otherwise cancel the pending
+  // timeout before it fires, and the fit would silently never happen.
+  const fit = useRef(() => {});
+  fit.current = () => {
+    const bounds = getNodesBounds(getNodes());
+    if (!bounds.width || !bounds.height || width <= 0 || height <= 0) return;
+
+    const zoom = Math.min(
+      Math.max(
+        Math.min((width - FIT_PAD * 2) / bounds.width, (height - FIT_PAD * 2) / bounds.height),
+        FIT_MIN_ZOOM,
+      ),
+      FIT_MAX_ZOOM,
+    );
+
+    setViewport({
+      zoom,
+      x: (width - bounds.width * zoom) / 2 - bounds.x * zoom,
+      y: (height - bounds.height * zoom) / 2 - bounds.y * zoom,
+    });
+  };
 
   // Positions are derived from state, so every dispatch re-seeds the graph
   // rather than trying to reconcile a layout that no longer describes it.
@@ -315,12 +376,23 @@ function Flow({ session }: { session: SessionState }) {
     setEdges(graph.edges);
   }, [graph, setNodes, setEdges]);
 
-  // Refit only when the shape changes. Refitting on a params update would
-  // yank the viewport for a change that moved nothing.
+  // Refit when the shape changes, and when the column itself is resized -
+  // collapsing the panel beside it can double the available width, and a graph
+  // that stayed at its old zoom would waste all of it. Not on a params update
+  // though: that would yank the viewport for a change that moved nothing.
+  //
+  // The delay also debounces the resize observer, which fires continuously
+  // while a divider is being dragged.
+  const fitted = useRef(false);
   useEffect(() => {
-    const id = window.setTimeout(() => void fitView(FIT_VIEW), 0);
+    // The very first fit runs immediately; without it the graph would be
+    // visibly parked at the origin for the length of the debounce.
+    const id = window.setTimeout(() => {
+      fit.current();
+      fitted.current = true;
+    }, fitted.current ? 120 : 0);
     return () => window.clearTimeout(id);
-  }, [graph.signature, fitView]);
+  }, [graph.signature, width, height]);
 
   return (
     <ReactFlow
@@ -330,8 +402,6 @@ function Flow({ session }: { session: SessionState }) {
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       colorMode="dark"
-      fitView
-      fitViewOptions={FIT_VIEW}
       minZoom={0.2}
       maxZoom={1.6}
       nodesConnectable={false}
@@ -345,19 +415,27 @@ function Flow({ session }: { session: SessionState }) {
   );
 }
 
-export function StateFlow({ session }: { session: SessionState }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [sized, setSized] = useState(false);
+interface Box {
+  w: number;
+  h: number;
+}
 
-  // React Flow measures node and handle geometry from the DOM on mount. If it
-  // mounts into a zero-sized box - a column dragged shut, a hidden tab - every
-  // node comes back unmeasured, and unmeasured nodes mean no edges and a
-  // fitView that silently does nothing. Waiting for a real box avoids that,
-  // and avoids the library's own width/height warning.
+export function StateFlow({ session, dir }: { session: SessionState; dir: FlowDirection }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<Box>({ w: 0, h: 0 });
+
+  // Mounting React Flow into a zero-sized box - a column dragged shut, a panel
+  // behind a tab - starts it in a state it does not recover from cleanly, and
+  // trips the library's own width/height warning. This waits for a real box;
+  // after that the graph takes its dimensions from the store, which tracks the
+  // container as it is resized.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setSized(el.clientWidth > 0 && el.clientHeight > 0);
+    const measure = () =>
+      setBox((prev) =>
+        prev.w === el.clientWidth && prev.h === el.clientHeight ? prev : { w: el.clientWidth, h: el.clientHeight },
+      );
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -366,9 +444,9 @@ export function StateFlow({ session }: { session: SessionState }) {
 
   return (
     <div ref={ref} className="h-full w-full">
-      {sized ? (
+      {box.w > 0 && box.h > 0 ? (
         <ReactFlowProvider>
-          <Flow session={session} />
+          <Flow session={session} dir={dir} />
         </ReactFlowProvider>
       ) : null}
     </div>

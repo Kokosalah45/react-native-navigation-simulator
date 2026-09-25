@@ -89,26 +89,47 @@ src/components/
 
 ## Reading the state graph
 
-`navigation.getState()` is drawn with [React Flow](https://reactflow.dev). Depth runs left
-to right, so **one column is one `getParent()` hop** and the path an action bubbles along is
-the horizontal one. Navigator nodes carry `index`, `routeNames` and `history`; route nodes
-carry the key, params and whether the screen is focused, mounted or still lazy. Edges are
-labelled with the field that holds the child - `routes[0]`, `route.state` - and the focus
-chain is the animated one. Removed routes linger for a moment as dashed red nodes with the
-reason they went. Drag to pan, scroll to zoom; the view refits whenever the shape changes.
+`navigation.getState()` is drawn with [React Flow](https://reactflow.dev). Navigator nodes
+carry `index`, `routeNames` and `history`; route nodes carry the key, params and whether the
+screen is focused, mounted or still lazy. Edges are labelled with the field that holds the
+child - `routes[0]`, `route.state` - and the focus chain is the animated one. Removed routes
+linger for a moment as dashed red nodes with the reason they went. Drag to pan, scroll to
+zoom; the view refits whenever the shape or the column width changes.
 
-Two details are deliberate rather than incidental:
+**Vertical / Horizontal** switches how the tree grows, and the choice is remembered:
+
+- **Vertical** grows downward, which reads like the config object you wrote and like the
+  JSON beside it.
+- **Horizontal** puts **one `getParent()` hop per column**, so on a deeply nested layout the
+  path an action bubbles along is simply the horizontal one.
+
+Both come out of the same layout pass: the tree grows along a *depth* axis with siblings
+spread along a *cross* axis, and the orientation is only which of the two is horizontal.
+
+Two further details are deliberate rather than incidental:
 
 - **Positions are computed, not solved.** Navigation state is a strict tree, so a plain
   recursive dendrogram is enough and, unlike a force layout, it is deterministic - the same
   state always draws the same picture, which is what makes a before/after comparison
   readable. No layout dependency is needed.
-- **Node sizes and handle positions are declared, not measured.** React Flow normally reads
-  both from the DOM, but every dispatch hands it new node objects, and this panel can mount
-  into a column dragged shut - either way the measurements are missing and the edges
-  silently vanish. These nodes are fixed-size by design, so `width`, `height` and `handles`
-  are supplied up front (the same route the docs use for server-side rendering) and the
-  graph is correct on its first frame.
+- **Node sizes, handle positions and the fit are declared, not measured.** React Flow
+  normally reads geometry from the DOM, but every dispatch hands it new node objects, and
+  this panel can mount into a column dragged shut - either way the measurements are missing
+  and the edges silently vanish. These nodes are fixed-size by design, so `width`, `height`,
+  `measured` and `handles` are all supplied up front (the same route the docs use for
+  server-side rendering) and the graph is correct on its first frame. The viewport is fitted
+  the same way, from `getNodesBounds` and the store's container size, rather than with
+  `fitView` - that call waits for React Flow to consider the nodes initialized, and on a
+  graph rebuilt from scratch every dispatch, the promise can simply never settle.
+
+## Collapsing the config column
+
+The layout configuration and lifecycle console sit in the last column, which **Hide config**
+collapses to a rail; clicking the rail brings it back, and the state graph refits into the
+width it gains. It is the column you stop needing once you know the layout, and on a laptop
+screen reclaiming it roughly doubles the room the graph has. The choice is remembered, and a
+collapsed column keeps its width for when you reopen it without counting against what the
+other columns may take.
 
 ## Mechanics the engine reproduces
 

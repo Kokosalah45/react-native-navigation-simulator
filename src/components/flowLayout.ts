@@ -13,11 +13,19 @@ import { isDrawerOpen } from '../engine/routers';
  * deterministic: the same state always draws the same picture, which matters
  * when you are comparing before and after a dispatch.
  *
- * Depth runs left to right, so each column is one `getParent()` hop and the
- * bubbling path is the horizontal one.
+ * The tree grows along a *depth* axis and siblings spread along a *cross* axis.
+ * Which of those is horizontal is only a mapping applied at the end, so both
+ * orientations come out of one algorithm:
+ *
+ *   TB - depth runs downward. Reads like the config object you wrote, and like
+ *        the getState() JSON beside it.
+ *   LR - depth runs rightward. One column is one getParent() hop, so the path
+ *        an action bubbles along is the horizontal one.
  */
 
-/* Fixed sizes keep the layout exact; detail that would change a node's height
+export type FlowDirection = 'TB' | 'LR';
+
+/* Fixed sizes keep the layout exact; detail that would change a node's size
    lives in tooltips instead. */
 export const NAV_W = 250;
 export const NAV_H = 104;
@@ -25,42 +33,26 @@ export const ROUTE_W = 240;
 export const ROUTE_H = 86;
 export const GHOST_H = 64;
 
-const COL_GAP = 78;
-const ROW_GAP = 16;
+/** Depth needs more room when it runs sideways; siblings need more when stacked. */
+const GAPS: Record<FlowDirection, { depth: number; cross: number }> = {
+  LR: { depth: 78, cross: 16 },
+  TB: { depth: 58, cross: 24 },
+};
 
-/**
- * Explicit geometry rather than measured geometry.
- *
- * React Flow only draws a node once it has a width and a height, and only
- * draws an edge once it knows where the handles are - normally both come from
- * measuring the DOM. Measuring is fragile here for two reasons: the panel can
- * mount into a column dragged shut, and every dispatch hands React Flow new
- * node objects, which arrive without the `measured` values the previous ones
- * had. Either way the edges quietly disappear.
- *
- * These nodes are fixed-size by design, so the sizes and the handle positions
- * are known up front and can just be declared. The docs' server-side rendering
- * path relies on exactly this, and it makes the graph deterministic: correct on
- * the first frame, with no measurement pass to lose.
- */
-const geometry = (w: number, h: number) =>
-  ({
-    width: w,
-    height: h,
-    handles: [
-      { type: 'target' as const, position: Position.Left, x: 0, y: h / 2 },
-      { type: 'source' as const, position: Position.Right, x: w, y: h / 2 },
-    ],
-  }) satisfies Partial<Node>;
+/** Carried on every node so the handles it renders match the declared ones. */
+interface Directed {
+  dir: FlowDirection;
+  [key: string]: unknown;
+}
 
-export type NavNodeData = {
+export interface NavNodeData extends Directed {
   state: NavState;
   handled: boolean;
   drawerOpen: boolean;
   onFocusChain: boolean;
-};
+}
 
-export type RouteNodeData = {
+export interface RouteNodeData extends Directed {
   route: RouteState;
   index: number;
   navType: NavState['type'];
@@ -72,9 +64,11 @@ export type RouteNodeData = {
   mounted: boolean;
   verdict?: RouteVerdict;
   blurb?: string;
-};
+}
 
-export type GhostNodeData = { ghost: Ghost };
+export interface GhostNodeData extends Directed {
+  ghost: Ghost;
+}
 
 export type NavigatorFlowNode = Node<NavNodeData, 'navigator'>;
 export type RouteFlowNode = Node<RouteNodeData, 'route'>;
@@ -91,78 +85,122 @@ export interface FlowGraph {
 
 interface Ctx {
   session: SessionState;
+  dir: FlowDirection;
   nodes: FlowNode[];
   edges: Edge[];
 }
 
-export function buildGraph(session: SessionState): FlowGraph {
-  const ctx: Ctx = { session, nodes: [], edges: [] };
+export function buildGraph(session: SessionState, dir: FlowDirection): FlowGraph {
+  const ctx: Ctx = { session, dir, nodes: [], edges: [] };
   layoutNavigator(session.root, 0, 0, ctx);
   return {
     nodes: ctx.nodes,
     edges: ctx.edges,
-    signature: ctx.nodes.map((n) => n.id).join('|'),
+    signature: `${dir}:${ctx.nodes.map((n) => n.id).join('|')}`,
   };
 }
 
-/** Lays a navigator and its subtree out, returning the height it occupies. */
-function layoutNavigator(nav: NavState, x: number, top: number, ctx: Ctx): number {
-  const { session } = ctx;
-  const childX = x + NAV_W + COL_GAP;
+/* ------------------------------ axis mapping ------------------------------ */
+
+const depthSpan = (dir: FlowDirection, w: number, h: number) => (dir === 'LR' ? w : h);
+const crossSpan = (dir: FlowDirection, w: number, h: number) => (dir === 'LR' ? h : w);
+const place = (dir: FlowDirection, depth: number, cross: number) =>
+  dir === 'LR' ? { x: depth, y: cross } : { x: cross, y: depth };
+
+/**
+ * Explicit geometry rather than measured geometry.
+ *
+ * React Flow only draws a node once it has a width and a height, and only
+ * draws an edge once it knows where the handles are - normally both come from
+ * measuring the DOM. Measuring is fragile here for two reasons: the panel can
+ * mount into a column dragged shut, and every dispatch hands React Flow new
+ * node objects, which arrive without the `measured` values the previous ones
+ * had. Either way the edges quietly disappear.
+ *
+ * These nodes are fixed-size by design, so the sizes and the handle positions
+ * are known up front and can just be declared. The docs' server-side rendering
+ * path relies on exactly this, and it makes the graph deterministic: correct on
+ * the first frame, with no measurement pass to lose.
+ */
+const geometry = (dir: FlowDirection, w: number, h: number) =>
+  ({
+    width: w,
+    height: h,
+    // `width`/`height` are enough to draw the node, but fitView only runs once
+    // React Flow considers the nodes initialized, and that check reads
+    // `measured` - which a freshly rebuilt node object does not carry. These
+    // sizes are fixed, so stating the measurement is accurate, not a shim.
+    measured: { width: w, height: h },
+    handles:
+      dir === 'LR'
+        ? [
+            { type: 'target' as const, position: Position.Left, x: 0, y: h / 2 },
+            { type: 'source' as const, position: Position.Right, x: w, y: h / 2 },
+          ]
+        : [
+            { type: 'target' as const, position: Position.Top, x: w / 2, y: 0 },
+            { type: 'source' as const, position: Position.Bottom, x: w / 2, y: h },
+          ],
+  }) satisfies Partial<Node>;
+
+/* -------------------------------- layout -------------------------------- */
+
+/** Lays a navigator and its subtree out, returning the cross-axis span it uses. */
+function layoutNavigator(nav: NavState, depth: number, crossTop: number, ctx: Ctx): number {
+  const { session, dir } = ctx;
+  const gap = GAPS[dir];
+  const childDepth = depth + depthSpan(dir, NAV_W, NAV_H) + gap.depth;
   const ghosts = session.ghosts.filter((g) => g.navKey === nav.key);
 
-  let cursor = top;
-  const anchors: { id: string; y: number; edge: Partial<Edge> }[] = [];
+  let cursor = crossTop;
+  const anchors: { id: string; edge: Partial<Edge> }[] = [];
 
   nav.routes.forEach((route, i) => {
-    const height = layoutRoute(route, nav, i, childX, cursor, ctx);
-    const focused = session.focused.includes(route.key);
+    const span = layoutRoute(route, nav, i, childDepth, cursor, ctx);
     anchors.push({
       id: route.key,
-      y: cursor,
       edge: {
         label: `routes[${i}]`,
-        ...edgeTone(i === nav.index, focused),
+        ...edgeTone(i === nav.index, session.focused.includes(route.key)),
       },
     });
-    cursor += height + ROW_GAP;
+    cursor += span + gap.cross;
   });
 
   for (const ghost of ghosts) {
     ctx.nodes.push({
       id: `ghost-${ghost.key}`,
       type: 'ghost',
-      position: { x: childX, y: cursor },
-      data: { ghost },
-      ...geometry(ROUTE_W, GHOST_H),
+      position: place(dir, childDepth, cursor),
+      data: { ghost, dir },
+      ...geometry(dir, ROUTE_W, GHOST_H),
     });
     anchors.push({
       id: `ghost-${ghost.key}`,
-      y: cursor,
       edge: {
         label: 'removed',
         style: { stroke: '#fb7185', strokeWidth: 1.2, strokeDasharray: '4 3' },
         labelStyle: { fill: '#fb7185', fontSize: 9 },
       },
     });
-    cursor += GHOST_H + ROW_GAP;
+    cursor += crossSpan(dir, ROUTE_W, GHOST_H) + gap.cross;
   }
 
-  const block = Math.max(cursor - ROW_GAP - top, NAV_H);
-  const navY = top + (block - NAV_H) / 2;
-  const onFocusChain = isOnFocusChain(nav, session);
+  const navCross = crossSpan(dir, NAV_W, NAV_H);
+  const block = Math.max(cursor - gap.cross - crossTop, navCross);
 
   ctx.nodes.push({
     id: nav.key,
     type: 'navigator',
-    position: { x, y: navY },
+    position: place(dir, depth, crossTop + (block - navCross) / 2),
     data: {
       state: nav,
       handled: session.last?.handledBy === nav.key,
       drawerOpen: nav.type === 'drawer' && isDrawerOpen(nav),
-      onFocusChain,
+      onFocusChain: isOnFocusChain(nav, session),
+      dir,
     },
-    ...geometry(NAV_W, NAV_H),
+    ...geometry(dir, NAV_W, NAV_H),
   });
 
   for (const anchor of anchors) {
@@ -178,32 +216,40 @@ function layoutNavigator(nav: NavState, x: number, top: number, ctx: Ctx): numbe
   return block;
 }
 
-/** Lays a route and the navigator it renders out, returning its height. */
-function layoutRoute(route: RouteState, nav: NavState, index: number, x: number, top: number, ctx: Ctx): number {
-  const { session } = ctx;
-  let height = ROUTE_H;
-  let y = top;
+/** Lays a route and the navigator it renders out, returning its cross-axis span. */
+function layoutRoute(
+  route: RouteState,
+  nav: NavState,
+  index: number,
+  depth: number,
+  crossTop: number,
+  ctx: Ctx,
+): number {
+  const { session, dir } = ctx;
+  const own = crossSpan(dir, ROUTE_W, ROUTE_H);
+  let span = own;
+  let cross = crossTop;
 
   if (route.state) {
-    const nestedHeight = layoutNavigator(route.state, x + ROUTE_W + COL_GAP, top, ctx);
-    height = Math.max(ROUTE_H, nestedHeight);
-    y = top + (height - ROUTE_H) / 2;
+    const childDepth = depth + depthSpan(dir, ROUTE_W, ROUTE_H) + GAPS[dir].depth;
+    const nested = layoutNavigator(route.state, childDepth, crossTop, ctx);
+    span = Math.max(own, nested);
+    cross = crossTop + (span - own) / 2;
 
-    const focused = session.focused.includes(route.key);
     ctx.edges.push({
       id: `${route.key}->${route.state.key}`,
       source: route.key,
       target: route.state.key,
       type: 'smoothstep',
       label: 'route.state',
-      ...edgeTone(true, focused),
+      ...edgeTone(true, session.focused.includes(route.key)),
     });
   }
 
   ctx.nodes.push({
     id: route.key,
     type: 'route',
-    position: { x, y },
+    position: place(dir, depth, cross),
     data: {
       route,
       index,
@@ -215,11 +261,12 @@ function layoutRoute(route: RouteState, nav: NavState, index: number, x: number,
       mounted: session.mounted.includes(route.key),
       verdict: session.verdicts[route.key],
       blurb: getScreenBlueprint(session.idx, nav.key, route.name)?.blurb,
+      dir,
     },
-    ...geometry(ROUTE_W, ROUTE_H),
+    ...geometry(dir, ROUTE_W, ROUTE_H),
   });
 
-  return height;
+  return span;
 }
 
 /**

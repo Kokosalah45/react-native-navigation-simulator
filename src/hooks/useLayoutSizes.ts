@@ -72,16 +72,26 @@ export function useLayoutSizes() {
    *
    * `budget` keeps the flexible pane from being squeezed out of existence:
    * `available` is the track size minus the dividers, `floor` the smallest the
-   * flexible pane may become.
+   * flexible pane may become. `exclude` drops panes that are not on screen -
+   * a collapsed column still has a remembered width, but it is not taking any.
    */
   const resize = useCallback(
-    (key: keyof LayoutSizes, delta: number, sign: 1 | -1 = 1, budget?: { available: number; floor: number }) => {
+    (
+      key: keyof LayoutSizes,
+      delta: number,
+      sign: 1 | -1 = 1,
+      budget?: { available: number; floor: number; exclude?: (keyof LayoutSizes)[] },
+    ) => {
       setSizes((current) => {
         let next = clamp(key, snapshot.current[key] + delta * sign);
 
         if (budget && budget.available > 0) {
           const siblings: (keyof LayoutSizes)[] =
-            key === 'config' ? [] : (['device', 'controls', 'inspector'] as const).filter((k) => k !== key);
+            key === 'config'
+              ? []
+              : (['device', 'controls', 'inspector'] as const).filter(
+                  (k) => k !== key && !budget.exclude?.includes(k),
+                );
           const taken = siblings.reduce((sum, k) => sum + current[k], 0);
           const ceiling = budget.available - taken - budget.floor;
           next = Math.max(LIMITS[key][0], Math.min(next, ceiling));

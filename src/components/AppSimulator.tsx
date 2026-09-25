@@ -19,7 +19,11 @@ import { EventLog } from './EventLog';
 import { CodePanel } from './CodePanel';
 import { Scenarios, type Scenario } from './Scenarios';
 import { ResizeHandle } from './ResizeHandle';
-import { useLayoutSizes, useMediaQuery } from '../hooks/useLayoutSizes';
+import { useLayoutSizes, useMediaQuery, type LayoutSizes } from '../hooks/useLayoutSizes';
+
+/** Width of the collapsed config column. */
+const RAIL_W = 34;
+const RAIL_KEY = 'rn-nav-sim:rail';
 import { HintLabel, Tooltip } from './Tooltip';
 
 const GHOST_MS = 620;
@@ -119,10 +123,42 @@ export function AppSimulator() {
   const gridRef = useRef<HTMLDivElement>(null);
   const inspectorRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * The config + console column collapses to a rail. It is the column you stop
+   * needing once you know the layout, and reclaiming it gives the state graph
+   * room to breathe on a laptop screen.
+   */
+  const [railed, setRailed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setRailed(localStorage.getItem(RAIL_KEY) === '1');
+    } catch {
+      /* private window, blocked site data */
+    }
+  }, []);
+
+  const toggleRail = useCallback(() => {
+    setRailed((open) => {
+      const next = !open;
+      try {
+        localStorage.setItem(RAIL_KEY, next ? '1' : '0');
+      } catch {
+        /* not worth surfacing */
+      }
+      return next;
+    });
+  }, []);
+
   /** Leaves the navigation-state column at least 280px, whatever you drag. */
   const columnBudget = useCallback(
-    () => ({ available: (gridRef.current?.clientWidth ?? 0) - 18, floor: 280 }),
-    [],
+    () => ({
+      available: (gridRef.current?.clientWidth ?? 0) - (railed ? RAIL_W + 12 : 18),
+      floor: 280,
+      // A railed column keeps its remembered width but occupies none of it.
+      exclude: railed ? (['inspector'] as (keyof LayoutSizes)[]) : undefined,
+    }),
+    [railed],
   );
   const rowBudget = useCallback(() => ({ available: (inspectorRef.current?.clientHeight ?? 0) - 6, floor: 160 }), []);
 
@@ -207,6 +243,19 @@ export function AppSimulator() {
           {wide && (
             <Tooltip
               wide
+              label="Collapse the layout configuration and lifecycle console into a rail, giving the state graph the width back. Click the rail to bring them back; the choice is remembered."
+            >
+              <button
+                onClick={toggleRail}
+                className="rounded-md border border-ink-700 bg-ink-850 px-2.5 py-1 text-[11px] text-ink-200 transition-colors hover:border-ink-500 hover:bg-ink-800"
+              >
+                {railed ? '‹ Show config' : 'Hide config ›'}
+              </button>
+            </Tooltip>
+          )}
+          {wide && (
+            <Tooltip
+              wide
               label="Drag any divider to resize a column, or double-click one to restore just that pane. Sizes are remembered between visits."
             >
               <button
@@ -252,7 +301,9 @@ export function AppSimulator() {
         style={
           wide
             ? {
-                gridTemplateColumns: `${sizes.device}px auto ${sizes.controls}px auto minmax(0,1fr) auto ${sizes.inspector}px`,
+                gridTemplateColumns: railed
+                  ? `${sizes.device}px auto ${sizes.controls}px auto minmax(0,1fr) ${RAIL_W}px`
+                  : `${sizes.device}px auto ${sizes.controls}px auto minmax(0,1fr) auto ${sizes.inspector}px`,
               }
             : undefined
         }
@@ -307,7 +358,7 @@ export function AppSimulator() {
           <VisualizerStack session={session} />
         </div>
 
-        {wide && (
+        {wide && !railed && (
           <ResizeHandle
             orientation="vertical"
             label="Inspector column width"
@@ -319,6 +370,24 @@ export function AppSimulator() {
         )}
 
         {/* -------- 4: layout config + lifecycle console -------- */}
+        {wide && railed ? (
+          <button
+            onClick={toggleRail}
+            title="Show layout configuration and lifecycle console"
+            className="group flex flex-col items-center gap-3 border-l border-ink-700 bg-ink-900/60 py-3 transition-colors hover:bg-ink-850"
+          >
+            <span className="text-[12px] leading-none text-ink-300 transition-colors group-hover:text-focus-400">‹</span>
+            <span
+              className="mono text-[9.5px] tracking-wider text-ink-300 transition-colors group-hover:text-ink-200"
+              style={{ writingMode: 'vertical-rl' }}
+            >
+              config · console
+            </span>
+            {session.log.length > 0 && (
+              <span className="mono rounded bg-ink-800 px-1 py-0.5 text-[9px] text-ink-300">{session.log.length}</span>
+            )}
+          </button>
+        ) : (
         <div
           ref={inspectorRef}
           className={wide ? 'grid min-h-0 overflow-hidden' : 'flex flex-col divide-y divide-ink-700'}
@@ -342,6 +411,7 @@ export function AppSimulator() {
             <EventLog log={session.log} onClear={() => send({ type: 'clearLog' })} />
           </div>
         </div>
+        )}
       </div>
     </div>
   );
