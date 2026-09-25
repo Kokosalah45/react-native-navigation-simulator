@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Link } from 'react-router';
 import type { NavAction, RNVersion } from '../engine/types';
 import { PRESETS, getPreset } from '../engine/blueprint';
 import {
@@ -275,6 +276,18 @@ export function AppSimulator() {
           >
             Restart app
           </button>
+
+          <Tooltip
+            wide
+            label="The manual test plan for this app: the checks that would have caught the bugs it actually hit. Results are kept in this browser, so a run survives the reloads some of the checks ask for."
+          >
+            <Link
+              to="/tests"
+              className="rounded-md border border-ink-700 bg-ink-850 px-2.5 py-1 text-[11px] text-ink-200 transition-colors hover:border-focus-400 hover:text-focus-400"
+            >
+              Test plan ›
+            </Link>
+          </Tooltip>
         </div>
       </header>
 

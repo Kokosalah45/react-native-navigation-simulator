@@ -57,9 +57,35 @@ Drag any divider to resize, double-click one to restore just that pane, or use *
 Arrow keys work when a divider has focus. Sizes persist in `localStorage`, and the navigation-state column keeps a
 280px floor so it can never be squeezed away. Below 1280px the columns stack and the dividers disappear.
 
+## Routes
+
+| path | what |
+| --- | --- |
+| `/` | the simulator |
+| `/tests` | the manual test plan, as a checklist you can work through |
+
+React Router in declarative mode, with a `BrowserRouter`. These are real paths, not hashes,
+so a static host has to fall back to `index.html` for unknown paths or a refresh on `/tests`
+will 404 — Vite's dev server already does.
+
+## The manual test plan
+
+`/tests` is the checklist for this app, linked from the header. Every check is written so it
+*can* fail: a step you can perform and one observable result, not "verify it works". Most of
+them exist because that exact thing broke once and the UI went on looking plausible — the
+whole of section A, and B3, are regressions that were silent.
+
+Results are marked pass/fail and kept in `localStorage`, because several checks end in
+"reload the page" and a checklist that forgets itself at that point is useless. The setup card
+saves the fixture section A needs (two instances of one nested navigator, which no built-in
+preset can produce) and drops you straight into the simulator.
+
 ## Source map
 
 ```
+src/
+  App.tsx               Routes: the simulator and the test plan
+  testPlan.ts           The manual test plan, as data
 src/engine/
   types.ts              NavState / RouteState / NavAction — the real state shape
   blueprint.ts          App layout DSL, the five presets, key generation, lazy hydration
@@ -84,6 +110,7 @@ src/components/
   EventLog.tsx          useEffect / useFocusEffect console
   CodePanel.tsx         Static vs dynamic config + the v6→v7 change list
   Scenarios.tsx         Scripted walkthroughs designed to be run on both versions
+  TestPlan.tsx          The /tests checklist, with pass/fail kept per browser
   Tooltip.tsx           Portal tooltip (panels scroll and pan, so inline would clip)
 ```
 
