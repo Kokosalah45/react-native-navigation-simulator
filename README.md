@@ -78,12 +78,37 @@ src/components/
   AppSimulator.tsx      Layout, version/preset switches, scenario playback
   PhoneCanvas.tsx       Device frame; a pure view over the state object
   CommandCenter.tsx     Every action dispatched as a real action object
-  VisualizerStack.tsx   Recursive navigator tree, badges, tooltips, animations
+  VisualizerStack.tsx   The navigation state panel: graph / JSON switch
+  StateFlow.tsx         getState() as a React Flow graph; custom navigator/route nodes
+  flowLayout.ts         State tree -> positioned nodes and edges (no auto-layout lib)
   EventLog.tsx          useEffect / useFocusEffect console
   CodePanel.tsx         Static vs dynamic config + the v6→v7 change list
   Scenarios.tsx         Scripted walkthroughs designed to be run on both versions
-  Tooltip.tsx           Portal tooltip (the visualizer scrolls, so inline would clip)
+  Tooltip.tsx           Portal tooltip (panels scroll and pan, so inline would clip)
 ```
+
+## Reading the state graph
+
+`navigation.getState()` is drawn with [React Flow](https://reactflow.dev). Depth runs left
+to right, so **one column is one `getParent()` hop** and the path an action bubbles along is
+the horizontal one. Navigator nodes carry `index`, `routeNames` and `history`; route nodes
+carry the key, params and whether the screen is focused, mounted or still lazy. Edges are
+labelled with the field that holds the child - `routes[0]`, `route.state` - and the focus
+chain is the animated one. Removed routes linger for a moment as dashed red nodes with the
+reason they went. Drag to pan, scroll to zoom; the view refits whenever the shape changes.
+
+Two details are deliberate rather than incidental:
+
+- **Positions are computed, not solved.** Navigation state is a strict tree, so a plain
+  recursive dendrogram is enough and, unlike a force layout, it is deterministic - the same
+  state always draws the same picture, which is what makes a before/after comparison
+  readable. No layout dependency is needed.
+- **Node sizes and handle positions are declared, not measured.** React Flow normally reads
+  both from the DOM, but every dispatch hands it new node objects, and this panel can mount
+  into a column dragged shut - either way the measurements are missing and the edges
+  silently vanish. These nodes are fixed-size by design, so `width`, `height` and `handles`
+  are supplied up front (the same route the docs use for server-side rendering) and the
+  graph is correct on its first frame.
 
 ## Mechanics the engine reproduces
 

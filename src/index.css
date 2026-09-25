@@ -1,3 +1,7 @@
+/* React Flow's stylesheet goes into the base layer BEFORE tailwind, so Tailwind
+   utilities on custom nodes win over the library defaults. Required by the
+   docs for Tailwind 4; importing it from a component file loads it too late. */
+@import '@xyflow/react/dist/style.css' layer(base);
 @import 'tailwindcss';
 
 @theme {
