@@ -191,9 +191,20 @@ export interface Beat {
   answer?: { action: NavAction; why: string };
 }
 
+export type Difficulty = 'easy' | 'medium' | 'hard';
+
+export const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard'];
+
+export const DIFFICULTY_BLURB: Record<Difficulty, string> = {
+  easy: 'One stack, one call. What v7 changed, and what popTo is actually for.',
+  medium: 'More than one navigator. Where an action can reach, and what it costs to get there.',
+  hard: 'Whole journeys. The same call is right in one state and wrong in the next.',
+};
+
 export interface Quiz {
   id: string;
   rung: number;
+  difficulty: Difficulty;
   title: string;
   /** The product situation, before any navigation happens. */
   story: string;
@@ -262,10 +273,48 @@ const TWO_BRANCHES: NavigatorBlueprint = {
   ],
 };
 
+/**
+ * The same three flows, but the two branches are peers of a TAB navigator
+ * rather than routes of a stack. Rung 7 runs the identical user story across
+ * this tree, which is the only honest way to show that the fix was never a
+ * cleverer call.
+ */
+const BRANCHES_IN_TABS: NavigatorBlueprint = {
+  id: 'shell',
+  type: 'tab',
+  screens: [
+    {
+      name: 'AccountsStack',
+      icon: 'A',
+      nested: {
+        id: 'accounts',
+        type: 'stack',
+        screens: [
+          { name: 'AccountsList', icon: 'L' },
+          { name: 'AccountDetails', icon: 'D' },
+        ],
+      },
+    },
+    {
+      name: 'TransfersStack',
+      icon: 'S',
+      nested: {
+        id: 'transfers',
+        type: 'stack',
+        screens: [
+          { name: 'OwnAccountsScreen', icon: 'O' },
+          { name: 'PayMyCredit', icon: 'C' },
+        ],
+      },
+    },
+  ],
+};
+
 export const QUIZZES: Quiz[] = [
   {
     id: 'push-you-did-not-ask-for',
     rung: 1,
+    difficulty: 'easy',
     title: 'The push you did not ask for',
     version: 'v7',
     story:
@@ -312,6 +361,7 @@ export const QUIZZES: Quiz[] = [
   {
     id: 'popto-that-replaces',
     rung: 2,
+    difficulty: 'easy',
     title: 'popTo the screen that was never there',
     version: 'v7',
     // The lesson IS the replace. The guard rail would refuse the call instead.
@@ -358,6 +408,7 @@ export const QUIZZES: Quiz[] = [
   {
     id: 'two-branches',
     rung: 3,
+    difficulty: 'medium',
     title: 'Two flows, one root stack',
     version: 'v7',
     story:
@@ -419,6 +470,224 @@ export const QUIZZES: Quiz[] = [
     ],
     takeaway:
       'A stack\'s routes array is a history. Using one to switch between sibling flows grows it forever unless you rewind deliberately.',
+  },
+
+  {
+    id: 'sideways',
+    rung: 4,
+    difficulty: 'medium',
+    title: 'Sideways is not a direction',
+    story:
+      'A shop app. Two stacks hang off a tab navigator: a dashboard flow and a profile flow. Your customer is deep in checkout when a banner offers them a security setting - which lives in the other flow entirely.',
+    presetId: 'nested',
+    version: 'v7',
+    beats: [
+      {
+        narrative: 'They browse into the dashboard and get as far as checkout.',
+        mode: 'scripted',
+        actions: [
+          { type: 'NAVIGATE', payload: { name: 'Dashboard', params: { screen: 'ProductDetails' } } },
+          { type: 'PUSH', payload: { name: 'Checkout' } },
+        ],
+      },
+      {
+        narrative: 'They tap the banner, which should take them to Security.',
+        goal:
+          'Get them to Security, and leave the checkout they were in the middle of exactly where it is - they are coming back to it.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'Security' },
+          { kind: 'preserved', name: 'Checkout' },
+          { kind: 'preserved', name: 'ProductDetails' },
+        ],
+        hints: [
+          'Try naming Security directly and read the trace. Every navigator on the way up returns null.',
+          'Security belongs to the profile stack. From the checkout stack that navigator is neither above you nor below you - it hangs off a different route of the tab navigator you share.',
+          'Bubbling gets you to the fork but cannot take the other prong. Name the route on the SHARED parent that leads into the other branch, and let it hand the rest down.',
+        ],
+        answer: {
+          action: { type: 'NAVIGATE', payload: { name: 'Profile', params: { screen: 'Security' } } },
+          why:
+            'Actions only ever travel upward. The checkout stack does not declare Security, and neither does the tab navigator - ' +
+            'but the tab navigator DOES declare Profile. So the first hop is reachable by bubbling, and the profile stack then ' +
+            'handles { screen: Security } itself. The dashboard branch is untouched: a tab switch moves an index, so checkout is ' +
+            'still mounted with everything the customer had typed into it.',
+        },
+      },
+    ],
+    takeaway: 'Bubbling reaches the fork. It can never turn around and descend the other prong - name the route that does.',
+  },
+
+  {
+    id: 'leave-a-way-back',
+    rung: 5,
+    difficulty: 'hard',
+    title: 'Leave them a way back',
+    story:
+      'A drawer over tabs over stacks. A push notification deep-links the user straight to their profile editor. Land them there badly and the back button throws them out of the section entirely.',
+    presetId: 'full-app',
+    version: 'v7',
+    beats: [
+      {
+        narrative: 'They are reading an article when the notification arrives.',
+        mode: 'scripted',
+        actions: [{ type: 'NAVIGATE', payload: { name: 'App', params: { screen: 'Home', params: { screen: 'Article' } } } }],
+      },
+      {
+        narrative: 'They tap the notification, which opens the profile editor.',
+        goal:
+          'Put them on EditProfile with AccountHome still underneath it, so back keeps them inside the account section instead of ejecting them from it.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'EditProfile' },
+          { kind: 'depth', nav: 'stack-account', is: 2 },
+        ],
+        hints: [
+          'Three navigators deep: drawer, then tabs, then the account stack. One payload, one hop per level.',
+          'By default a nested payload makes the target the child stack\'s ONLY route - there is nothing underneath to go back to.',
+          'There is a flag that keeps the child\'s initialRouteName below the target. It sits next to the `screen` it qualifies, so it belongs on the innermost level - and it only does anything when that dispatch CREATES the child navigator.',
+        ],
+        answer: {
+          action: {
+            type: 'NAVIGATE',
+            payload: { name: 'App', params: { screen: 'Account', params: { screen: 'EditProfile', initial: false } } },
+          },
+          why:
+            'initial: false tells the account stack to keep AccountHome underneath EditProfile as it mounts, so the stack is two ' +
+            'deep and goBack() stays inside the section. Without it the stack holds EditProfile alone, back finds nothing to pop, ' +
+            'and the action bubbles up to the tab navigator - the user is thrown out of the flow they were deep-linked into.',
+        },
+      },
+    ],
+    takeaway: 'A nested payload builds the child stack from nothing. initial: false is how you give it a floor.',
+  },
+
+  {
+    id: 'right-a-moment-ago',
+    rung: 6,
+    difficulty: 'hard',
+    title: 'The call that was right a moment ago',
+    // The last beat turns on popTo eating the branch you are standing on. With
+    // the guard rail up the call is merely refused, and the hint that promises
+    // the damage becomes a lie about what just happened.
+    strictPopTo: false,
+    story:
+      'Back to the bank, and the whole round trip this time: account, transfer, back to the account, then off to transfers again. The instinct you just built is about to be wrong.',
+    blueprint: TWO_BRANCHES,
+    version: 'v7',
+    beats: [
+      {
+        narrative: 'They open account 7, then go to transfers.',
+        mode: 'scripted',
+        actions: [
+          { type: 'NAVIGATE', payload: { name: 'AccountsStack', params: { screen: 'AccountDetails', params: { id: 7 } } } },
+          { type: 'NAVIGATE', payload: { name: 'TransfersStack', params: { screen: 'OwnAccountsScreen' } } },
+        ],
+      },
+      {
+        narrative: 'They change their mind and go back to the account.',
+        goal: 'Back to the same AccountDetails, with the transfers flow gone and the root stack two deep.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'AccountDetails' },
+          { kind: 'preserved', name: 'AccountDetails' },
+          { kind: 'destroyed', name: 'OwnAccountsScreen' },
+          { kind: 'depth', nav: 'stack-root', is: 2 },
+        ],
+        hints: ['AccountsStack is at index 1 of the root stack. It is genuinely behind you.'],
+        answer: {
+          action: { type: 'POP_TO', payload: { name: 'AccountsStack' } },
+          why: 'The target was already in the stack, so popTo truncated to it and the original branch came back intact.',
+        },
+      },
+      {
+        narrative: 'A minute later they tap Transfers again.',
+        goal:
+          'Get them to OwnAccountsScreen - and keep the account branch they are standing on, because they will want it back again afterwards.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'OwnAccountsScreen' },
+          { kind: 'preserved', name: 'AccountDetails' },
+          { kind: 'depth', nav: 'stack-root', is: 3 },
+        ],
+        hints: [
+          'The call that worked one step ago will not work here. Ask what changed about the stack.',
+          'popTo destroyed TransfersStack when you rewound past it. It is not in the routes array any more.',
+          'When the name is not already in the stack, popTo pops the current screen and puts the target in its place - it would eat the account branch you are standing on. You are going somewhere new again.',
+        ],
+        answer: {
+          action: { type: 'NAVIGATE', payload: { name: 'TransfersStack', params: { screen: 'OwnAccountsScreen' } } },
+          why:
+            'This is the same call as the very first hop, and for the same reason: TransfersStack is not in the stack, so you are ' +
+            'going somewhere new, not back. popTo was right one step ago and is destructive now - nothing about your intent ' +
+            'changed, only whether the destination was behind you.',
+        },
+      },
+    ],
+    takeaway:
+      'popTo is not "go to the other flow". It is "rewind" - and whether that is what you want depends on the state, not on the intent.',
+  },
+
+  {
+    id: 'same-journey-better-tree',
+    rung: 7,
+    difficulty: 'hard',
+    title: 'Same journey, better tree',
+    story:
+      'The identical banking story - account, transfers, back again - but the two flows are now peers of a TAB navigator instead of routes of a stack. Nothing else changed. Watch what happens to the calls you needed.',
+    blueprint: BRANCHES_IN_TABS,
+    version: 'v7',
+    beats: [
+      {
+        narrative: 'They open account 7.',
+        mode: 'scripted',
+        actions: [{ type: 'NAVIGATE', payload: { name: 'AccountDetails', params: { id: 7 } } }],
+      },
+      {
+        narrative: 'They tap Transfers.',
+        goal: 'Get them to OwnAccountsScreen, with the account branch left as it is.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'OwnAccountsScreen' },
+          { kind: 'preserved', name: 'AccountDetails' },
+          { kind: 'depth', nav: 'tab-shell', is: 2 },
+        ],
+        hints: ['The shell is a tab navigator now. Ask what its router does with a name it declares.'],
+        answer: {
+          action: { type: 'NAVIGATE', payload: { name: 'TransfersStack', params: { screen: 'OwnAccountsScreen' } } },
+          why:
+            'The tab router moved its index rather than appending, so the shell still holds exactly two routes. Nothing was pushed ' +
+            'and nothing was destroyed.',
+        },
+      },
+      {
+        narrative: 'They tap back to the account.',
+        goal:
+          'Back to the same AccountDetails, account 7 as they left it - and the shell must still hold exactly two routes, with no second copy of anything.',
+        mode: 'graded',
+        assert: [
+          { kind: 'focus', name: 'AccountDetails' },
+          { kind: 'preserved', name: 'AccountDetails' },
+          { kind: 'depth', nav: 'tab-shell', is: 2 },
+          { kind: 'noDuplicates' },
+        ],
+        hints: [
+          'Try the plainest call you know. On the stack-rooted version it duplicated the branch.',
+          'A tab router has no routes array to grow - jumpTo and navigate both just move the index.',
+          'You do not need popTo, you do not need { pop: true }, and you do not need a nested payload. The branch is still mounted, holding the screen you left.',
+        ],
+        answer: {
+          action: { type: 'NAVIGATE', payload: { name: 'AccountsStack' } },
+          why:
+            'This is the punchline. navigate(\'AccountsStack\') is the exact call that pushed a duplicate branch under a root ' +
+            'stack - here it is simply correct. The tab router moves an index, the branch was never unmounted, and you land back ' +
+            'on AccountDetails with account 7 still in its params. No flag, no nested payload, no rewind: the fix was never a ' +
+            'cleverer call, it was the shape of the tree.',
+        },
+      },
+    ],
+    takeaway:
+      'If you are reaching for popTo every time the user switches sections, the sections are probably in the wrong kind of navigator.',
   },
 ];
 

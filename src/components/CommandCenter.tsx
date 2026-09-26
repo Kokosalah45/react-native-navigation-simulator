@@ -256,9 +256,12 @@ export function CommandCenter({ session, dispatch, blindfold = false }: Props) {
         <Check
           checked={initialFalse}
           onChange={setInitialFalse}
-          disabled={!isNestable || !useNested}
+          // Gated on nestability alone: the "navigate nested" button always
+          // carries this flag, so gating it on the nested-payload checkbox too
+          // left it greyed out for the one call that honours it.
+          disabled={!isNestable}
           label="initial: false"
-          tip="Only has an effect when the child navigator is CREATED by this dispatch. Default (initial: true) makes the target the child's only route, so there is nothing to go back to inside it. initial: false keeps the child's initialRouteName underneath."
+          tip="Only has an effect when the child navigator is CREATED by this dispatch. Default (initial: true) makes the target the child's only route, so there is nothing to go back to inside it. initial: false keeps the child's initialRouteName underneath. It applies to the nested payload button below, and to navigate() when the nested payload box is ticked."
         />
       </div>
 

@@ -19,7 +19,7 @@ import { VisualizerStack } from './VisualizerStack';
 import { EventLog } from './EventLog';
 import { CodePanel } from './CodePanel';
 import { Scenarios, type Scenario } from './Scenarios';
-import { QuizList, QuizPanel, type QuizRun } from './Quiz';
+import { DrillsModal, QuizPanel, type QuizRun } from './Quiz';
 import {
   grade as gradeBeat,
   loadProgress,
@@ -38,7 +38,7 @@ import { useLayoutSizes, useMediaQuery, type LayoutSizes } from '../hooks/useLay
 /** Width of the collapsed config column. */
 const RAIL_W = 34;
 const RAIL_KEY = 'rn-nav-sim:rail';
-import { HintLabel, InfoTip, Tooltip } from './Tooltip';
+import { HintLabel, Tooltip } from './Tooltip';
 
 const GHOST_MS = 620;
 const STEP_MS = 1150;
@@ -49,6 +49,7 @@ export function AppSimulator() {
 
   /* ------------------------------ quizzes ------------------------------ */
   const [quiz, setQuiz] = useState<QuizRun | null>(null);
+  const [drillsOpen, setDrillsOpen] = useState(false);
   const [progress, setProgress] = useState<QuizProgress>({});
   /**
    * The session as the current beat found it, plus the keys that were alive
@@ -156,6 +157,7 @@ export function AppSimulator() {
       });
       // The preset lands in the next render; the beat opens against it there.
       beatStart.current = null;
+      setDrillsOpen(false);
     },
     [],
   );
@@ -417,6 +419,22 @@ export function AppSimulator() {
 
           <Tooltip
             wide
+            label="Graded exercises for navigate and popTo, as user stories. The app sets the stage and you make the call; it grades the STATE you produced, not the call you typed - so it can tell you that you reached the right screen and still destroyed something you needed."
+          >
+            <button
+              onClick={() => setDrillsOpen(true)}
+              className={`rounded-md border px-2.5 py-1 text-[11px] transition-colors ${
+                quiz
+                  ? 'border-focus-400/60 bg-focus-400/10 text-focus-400'
+                  : 'border-ink-700 bg-ink-850 text-ink-200 hover:border-focus-400 hover:text-focus-400'
+              }`}
+            >
+              Drills{quiz ? ` · rung ${quiz.quiz.rung}` : ''}
+            </button>
+          </Tooltip>
+
+          <Tooltip
+            wide
             label="The manual test plan for this app: the checks that would have caught the bugs it actually hit. Results are kept in this browser, so a run survives the reloads some of the checks ask for."
           >
             <Link
@@ -428,6 +446,10 @@ export function AppSimulator() {
           </Tooltip>
         </div>
       </header>
+
+      {drillsOpen && (
+        <DrillsModal progress={progress} onStart={startQuiz} onClose={() => setDrillsOpen(false)} />
+      )}
 
       {draft && (
         <LayoutBuilder
@@ -477,13 +499,7 @@ export function AppSimulator() {
             />
           ) : (
             <div>
-              <h3 className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-300">
-                Drills
-                <InfoTip label="You make the call; the engine grades the STATE you produced, not the call you typed. Several calls are right in some states and wrong in others, so matching call shapes would only teach recitation." />
-              </h3>
-              <QuizList progress={progress} onStart={startQuiz} />
-
-              <h3 className="mb-1.5 mt-3 text-[10px] font-medium uppercase tracking-wider text-ink-300">Guided scenarios</h3>
+              <h3 className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-300">Guided scenarios</h3>
               <Scenarios
                 activeId={runner?.scenario.id ?? null}
                 stepIndex={runner?.step ?? 0}

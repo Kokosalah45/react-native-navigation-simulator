@@ -1,7 +1,7 @@
-import type { Beat, BeatScore, Grade, Quiz } from '../engine/quiz';
-import { QUIZZES } from '../engine/quiz';
+import { useEffect } from 'react';
+import type { Beat, BeatScore, Difficulty, Grade, Quiz } from '../engine/quiz';
+import { DIFFICULTIES, DIFFICULTY_BLURB, QUIZZES } from '../engine/quiz';
 import { CodeLine } from './CodeBlock';
-import { Tooltip } from './Tooltip';
 
 /* ------------------------------------------------------------------ */
 /* The list                                                            */
@@ -14,39 +14,111 @@ const SCORE_TONE: Record<BeatScore, string> = {
   failed: 'bg-gone-400',
 };
 
-export function QuizList({
+const DIFF_TONE: Record<Difficulty, string> = {
+  easy: 'border-alive-400/40 text-alive-400',
+  medium: 'border-focus-400/40 text-focus-400',
+  hard: 'border-v6-400/40 text-v6-400',
+};
+
+/**
+ * The drill picker, as a modal off the top bar.
+ *
+ * Grouped by how much of the tree you have to hold in your head at once, which
+ * is the only axis that actually gets harder: one stack, then more than one
+ * navigator, then whole journeys where the same call changes meaning between
+ * two steps.
+ */
+export function DrillsModal({
   progress,
   onStart,
+  onClose,
 }: {
   progress: Record<string, BeatScore[]>;
   onStart: (quiz: Quiz) => void;
+  onClose: () => void;
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return (
-    <div className="space-y-1.5">
-      {QUIZZES.map((quiz) => {
-        const scores = progress[quiz.id] ?? [];
-        const graded = quiz.beats.filter((b) => b.mode === 'graded').length;
-        return (
-          <Tooltip key={quiz.id} wide className="block" label={quiz.story}>
-            <button
-              onClick={() => onStart(quiz)}
-              className="w-full rounded-lg border border-ink-700 bg-ink-850 px-2.5 py-2 text-left transition-colors hover:border-ink-500 hover:bg-ink-800"
-            >
-              <div className="flex items-center gap-2">
-                <span className="mono shrink-0 rounded bg-ink-800 px-1 py-px text-[9px] font-bold text-ink-300">
-                  {quiz.rung}
-                </span>
-                <span className="truncate text-[11.5px] font-medium text-ink-200">{quiz.title}</span>
-                <span className="ml-auto flex shrink-0 gap-0.5">
-                  {Array.from({ length: graded }, (_, i) => (
-                    <span key={i} className={`h-1.5 w-1.5 rounded-full ${scores[i] ? SCORE_TONE[scores[i]] : 'bg-ink-700'}`} />
-                  ))}
-                </span>
-              </div>
-            </button>
-          </Tooltip>
-        );
-      })}
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink-950/80 p-6 backdrop-blur-sm"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Drills"
+        className="my-auto w-full max-w-2xl rounded-xl border border-ink-700 bg-ink-900 shadow-2xl"
+      >
+        <header className="flex items-baseline gap-2 border-b border-ink-700 px-4 py-3">
+          <h2 className="text-[13px] font-semibold text-ink-200">Drills</h2>
+          <p className="min-w-0 flex-1 truncate text-[10.5px] text-ink-500">
+            You make the call; the engine grades the state you produced, not the call you typed.
+          </p>
+          <button onClick={onClose} className="mono shrink-0 text-[10px] text-ink-500 hover:text-ink-200">
+            esc
+          </button>
+        </header>
+
+        <div className="space-y-4 px-4 py-3.5">
+          {DIFFICULTIES.map((level) => {
+            const quizzes = QUIZZES.filter((q) => q.difficulty === level);
+            if (!quizzes.length) return null;
+            return (
+              <section key={level}>
+                <div className="mb-1.5 flex items-baseline gap-2">
+                  <span
+                    className={`mono rounded border px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${DIFF_TONE[level]}`}
+                  >
+                    {level}
+                  </span>
+                  <p className="min-w-0 flex-1 text-[10px] leading-snug text-ink-500">{DIFFICULTY_BLURB[level]}</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  {quizzes.map((quiz) => {
+                    const scores = progress[quiz.id] ?? [];
+                    const graded = quiz.beats.filter((b) => b.mode === 'graded').length;
+                    const complete = scores.length >= graded;
+                    return (
+                      <button
+                        key={quiz.id}
+                        onClick={() => onStart(quiz)}
+                        className="block w-full rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-left transition-colors hover:border-focus-400/60 hover:bg-ink-800"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="mono shrink-0 rounded bg-ink-800 px-1 py-px text-[9px] font-bold text-ink-300">
+                            {quiz.rung}
+                          </span>
+                          <span className="truncate text-[11.5px] font-medium text-ink-200">{quiz.title}</span>
+                          {complete && <span className="mono shrink-0 text-[9px] text-alive-400">done</span>}
+                          <span className="ml-auto flex shrink-0 gap-0.5">
+                            {Array.from({ length: graded }, (_, i) => (
+                              <span
+                                key={i}
+                                className={`h-1.5 w-1.5 rounded-full ${scores[i] ? SCORE_TONE[scores[i]] : 'bg-ink-700'}`}
+                              />
+                            ))}
+                          </span>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-ink-500">{quiz.story}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
