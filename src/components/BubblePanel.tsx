@@ -24,7 +24,7 @@ interface Props {
  * jumpTo is invisible to a stack.
  */
 export function BubblePanel({ session, target, resolution, previewId, onPreviewChange, dispatch }: Props) {
-  const { trace, spec, handledBy, headline, explanation, bare, nested, relation } = resolution;
+  const { trace, spec, handledBy, headline, explanation, bare, nested, relation, pop } = resolution;
 
   const verdictTone =
     handledBy === null
@@ -48,8 +48,9 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
               Each action bubbles by its own rules. From the docs: actions “first go to the current navigator. If it can't handle
               them, they bubble up to the parent.” A router that has no handler for an action returns{' '}
               <code className="text-focus-400">null</code> — so <code>push</code> travels straight past a tab navigator to the
-              nearest ancestor stack, while <code>jumpTo</code> does the opposite. Every verdict below is a dry run of the real
-              routers.
+              nearest ancestor stack, while <code>jumpTo</code> does the opposite. The <code>pop: true</code> modifier feeds in
+              here too: it is an option of <code>navigate</code> alone, so every other action ignores it. Every verdict below is a
+              dry run of the real routers.
             </span>
           }
         />
@@ -120,6 +121,42 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
           </p>
         )}
       </div>
+
+      {/**
+        * The pop modifier, but only when it is worth a line: ticked, or unticked
+        * while it would change the outcome. Silent when it is off and irrelevant.
+        */}
+      {(pop.on || pop.changes) && (
+        <div
+          className={`mb-2 rounded border px-2 py-1.5 ${
+            !pop.accepted
+              ? 'border-ink-700 bg-ink-850'
+              : pop.changes
+                ? 'border-alive-400/40 bg-alive-400/[0.06]'
+                : 'border-ink-700 bg-ink-850'
+          }`}
+        >
+          <div className="mono mb-1 flex items-center gap-1.5 text-[9px] uppercase tracking-wider">
+            <span
+              className={
+                !pop.accepted ? 'text-ink-500 line-through' : pop.on ? 'text-alive-400' : 'text-ink-300'
+              }
+            >
+              pop: true
+            </span>
+            <span className="text-ink-500">
+              {!pop.accepted
+                ? `ignored by ${spec.label}`
+                : pop.on
+                  ? pop.changes
+                    ? 'applied - and it changes the outcome'
+                    : 'applied - but it makes no difference here'
+                  : 'off - ticking it would change the outcome'}
+            </span>
+          </div>
+          <p className="text-[10.5px] leading-relaxed text-ink-200">{pop.note}</p>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <CallShape info={bare} label={spec.needsName ? 'bare' : spec.label} onRun={() => dispatch(bare.action)} />

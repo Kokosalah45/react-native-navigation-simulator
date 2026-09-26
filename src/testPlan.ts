@@ -235,6 +235,33 @@ export const SECTIONS: Section[] = [
         why: 'The pop option belongs to the navigator that matches the name you called, so on a nested payload it has to apply to the FIRST hop. Applied to the last hop it pushed a duplicate StackA and then popped inside the fresh child.',
       },
       {
+        id: 'D8',
+        title: 'The pop modifier reaches the resolver',
+        steps: [
+          'On Native Stack, navigate to Details so Home sits behind you',
+          'Target Home and read the "Would this action be handled?" panel with pop: true OFF',
+          'Tick pop: true',
+          'Switch the previewed action to popTo, then to push',
+        ],
+        expect:
+          'Off, the panel already says "ticking it would change the outcome" and explains what each form would do. On, it says ' +
+          '"applied - and it changes the outcome", names the index and key it would roll back to and the screens it would destroy, ' +
+          'and the bare call gains { pop: true }. On popTo and push the flag is struck through as "ignored", and their code lines ' +
+          'never grow a pop option.',
+        why:
+          'The modifier used to change only the buttons further down, so the panel above them answered a different question from ' +
+          'the one the tick had asked. pop is an option of navigate alone - popTo takes only merge - and saying so is the point.',
+      },
+      {
+        id: 'D9',
+        title: 'On the way out it makes no difference, and says so',
+        steps: ['From a fresh Native Stack, target Details (not yet in the stack) with pop: true on'],
+        expect:
+          'The panel says there is nothing to pop back TO and the screen is pushed either way — not a warning, and not silence. ' +
+          'Targeting a screen handled by a tab navigator instead says only the stack router reads the option.',
+        why: 'Both halves are dry-run and compared, so the panel can tell "wrong flag" apart from "right flag, wrong moment".',
+      },
+      {
         id: 'D2',
         title: 'popTo, strict and documented',
         steps: ["popTo('Home') with strict popTo ON", 'the same call with it OFF'],
@@ -305,10 +332,17 @@ SECTIONS.push({
     {
       id: 'E3',
       title: 'pop: true is visible on the button',
-      steps: ['In v7, tick the "pop: true" modifier'],
+      steps: [
+        'In v7, tick the "pop: true" modifier',
+        'Then flip the version switch to v6 and look at the same buttons',
+      ],
       expect:
-        "The navigate button's label becomes navigate('Name', { pop: true }) — the flag is never silently on. The checkbox is hidden in v6, where navigate already unwinds.",
-      why: 'The modifier existed but nothing on the button reflected it, so it was easy to tick and not notice.',
+        "The navigate button's label becomes navigate('Name', { pop: true }), the nested button says the same, and the resolver " +
+        'panel gains a row for it — the flag is never silently on. The checkbox is hidden in v6, where navigate already unwinds, ' +
+        'and on v6 every one of those labels drops the option again rather than keeping a value you can no longer see.',
+      why:
+        'The modifier existed but nothing on the button reflected it, so it was easy to tick and not notice — and a value ticked ' +
+        'on v7 used to survive the switch to v6 with nothing on screen to show it.',
     },
   ],
 });

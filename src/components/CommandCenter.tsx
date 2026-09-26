@@ -49,6 +49,13 @@ export function CommandCenter({ session, dispatch }: Props) {
   const selected = target || screens[0]?.name || '';
   const selectedOption = screens.find((s) => s.name === selected);
 
+  /**
+   * `pop` is a v7 option, and the modifier is hidden on v6 - so a value left
+   * ticked before flipping the version switch must not keep affecting anything.
+   * Nothing is ever silently on.
+   */
+  const popOn = popMode && session.version === 'v7';
+
   const parsed = useMemo((): { ok: true; value: Params | undefined } | { ok: false; error: string } => {
     const raw = paramsText.trim();
     if (!raw || raw === '{}') return { ok: true, value: undefined };
@@ -66,8 +73,8 @@ export function CommandCenter({ session, dispatch }: Props) {
   const params = parsed.ok ? parsed.value : undefined;
 
   const resolution = useMemo(
-    () => resolveTarget(session, selected, selectedOption?.navKey ?? null, previewId, params, sourceNav || undefined),
-    [session, selected, selectedOption, previewId, params, sourceNav],
+    () => resolveTarget(session, selected, selectedOption?.navKey ?? null, previewId, params, sourceNav || undefined, popOn),
+    [session, selected, selectedOption, previewId, params, sourceNav, popOn],
   );
 
   /**
@@ -112,7 +119,7 @@ export function CommandCenter({ session, dispatch }: Props) {
     return {
       navigate: {
         type: 'NAVIGATE',
-        payload: { ...withNesting({ name: selected, params }), merge, ...(popMode ? { pop: true } : {}) },
+        payload: { ...withNesting({ name: selected, params }), merge, ...(popOn ? { pop: true } : {}) },
       },
       push: { type: 'PUSH', payload: { name: selected, params } },
       pop: { type: 'POP', payload: { count: popCount } },
@@ -134,12 +141,12 @@ export function CommandCenter({ session, dispatch }: Props) {
             path.map((hop, i) => (i === path.length - 1 ? { ...hop, params, ...(initialFalse ? { initial: false } : {}) } : hop)),
           ),
           merge,
-          ...(popMode ? { pop: true } : {}),
+          ...(popOn ? { pop: true } : {}),
         },
       },
       reset: { type: 'RESET', payload: { index: resetRoutes.length - 1, routes: resetRoutes } },
     } satisfies Record<string, NavAction>;
-  }, [selected, params, merge, popMode, popCount, path, initialFalse, useNested, isNestable, resetText]);
+  }, [selected, params, merge, popOn, popCount, path, initialFalse, useNested, isNestable, resetText]);
 
   /** Which hooks each action would fire, from a speculative run of the engine. */
   const previews = useMemo(() => {
@@ -204,7 +211,7 @@ export function CommandCenter({ session, dispatch }: Props) {
             checked={popMode}
             onChange={setPopMode}
             label="pop: true"
-            tip="The v7 opt-in that restores v6 unwinding: navigate(name, params, { pop: true }) goes back to an existing instance instead of pushing a new one."
+            tip="The v7 opt-in that restores v6 unwinding: navigate(name, params, { pop: true }) goes back to an existing instance instead of pushing a new one. It feeds the resolver below, which dry-runs the call both ways and tells you whether the flag changes anything from where you are standing. It is an option of navigate alone, so the other previewed actions ignore it."
           />
         )}
         <Check
@@ -253,7 +260,7 @@ export function CommandCenter({ session, dispatch }: Props) {
           <>
             <CodeBlock code={nestedPreview ?? ''} language="jsx" className="mb-1.5 !p-2 !text-[9.5px]" />
             <Cmd
-              label={`navigate nested → ${selected}${popMode ? " { pop: true }" : ""}`}
+              label={`navigate nested → ${selected}${popOn ? " { pop: true }" : ""}`}
               tone="primary"
               tip="Dispatches the payload above with your params and initial flag applied, whether or not the nested payload checkbox is ticked."
               preview={previews.nested}
@@ -290,7 +297,7 @@ export function CommandCenter({ session, dispatch }: Props) {
       {/* ---------------- stack actions ---------------- */}
       <Group title="Stack actions">
         <Cmd
-          label={`navigate('${selected}'${popMode ? ', { pop: true }' : ''})`}
+          label={`navigate('${selected}'${popOn ? ', { pop: true }' : ''})`}
           tone="primary"
           tip={
             session.version === 'v7'

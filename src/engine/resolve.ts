@@ -33,37 +33,37 @@ export interface PreviewActionSpec {
   /** Only `navigate` resolves a `{ screen }` payload into a child navigator. */
   supportsNested?: boolean;
   v7Only?: boolean;
-  /** Carries `{ pop: true }` into the nested payload as well as the bare call. */
-  pop?: boolean;
+  /**
+   * Whether this action reads the v7 `pop` option at all.
+   *
+   * It is an option of `navigate` and nothing else - the docs give the shape as
+   * `navigate(name, params, { pop: true })`, and `popTo`'s own options argument
+   * accepts only `merge`. Every other router ignores the flag, which is worth
+   * saying out loud rather than hiding.
+   */
+  acceptsPop?: boolean;
   build: (name: string, params?: Params) => NavAction;
 }
 
 export const PREVIEW_ACTIONS: PreviewActionSpec[] = [
   {
+    /**
+     * The `pop` option - "Whether screens should be popped to navigate to a
+     * matching screen in the stack" - has no entry of its own here, because it
+     * is not a method of its own. It is the `pop: true` modifier above, and it
+     * feeds straight into this preview.
+     *
+     * navigate with that option is also the one call shape that both addresses a
+     * nested screen AND rolls the stack back to an existing branch instead of
+     * pushing a duplicate of it. popTo cannot do the first half: its second
+     * argument is screen params for the destination, not a `{ screen }` payload.
+     */
     id: 'navigate',
     label: 'navigate',
     needsName: true,
     supportsNested: true,
+    acceptsPop: true,
     build: (name, params) => ({ type: 'NAVIGATE', payload: { name, params } }),
-  },
-  {
-    /**
-     * `navigate` with the v7 `pop` option: "Whether screens should be popped to
-     * navigate to a matching screen in the stack."
-     *
-     * This is the one call shape that both addresses a nested screen AND rolls
-     * the stack back to an existing branch instead of pushing a duplicate of
-     * it. popTo cannot do the first half - its second argument is screen params
-     * for the destination, not a `{ screen }` payload - so for "go back to the
-     * screen I was on, over there", this is the call.
-     */
-    id: 'navigatePop',
-    label: 'navigate + pop',
-    needsName: true,
-    supportsNested: true,
-    v7Only: true,
-    pop: true,
-    build: (name, params) => ({ type: 'NAVIGATE', payload: { name, params, pop: true } }),
   },
   { id: 'push', label: 'push', needsName: true, build: (name, params) => ({ type: 'PUSH', payload: { name, params } }) },
   {
@@ -86,7 +86,6 @@ export const getPreviewAction = (id: string) => PREVIEW_ACTIONS.find((a) => a.id
 /** Which navigator types have a handler for this action at all. */
 const ACCEPTED_BY: Record<string, NavState['type'][]> = {
   navigate: ['stack', 'tab', 'drawer'],
-  navigatePop: ['stack', 'tab', 'drawer'],
   push: ['stack'],
   popTo: ['stack'],
   replace: ['stack'],
@@ -126,6 +125,25 @@ export interface CallShapeInfo {
   hops: number;
 }
 
+/**
+ * What the `pop: true` modifier is doing to the previewed action.
+ *
+ * Both halves are dry-run, so this can say whether the flag actually changes
+ * anything from where the focus is now rather than restating the docs. That
+ * distinction is the whole point: on the way OUT to a fresh branch it changes
+ * nothing, and on the way BACK it is the difference between returning to your
+ * branch and growing a second copy of it.
+ */
+export interface PopEffect {
+  /** The modifier is ticked. */
+  on: boolean;
+  /** This action's router reads the option at all. */
+  accepted: boolean;
+  /** Toggling it changes what this dispatch would do, from here. */
+  changes: boolean;
+  note: string;
+}
+
 export interface Resolution {
   spec: PreviewActionSpec;
   trace: BubbleStep[];
@@ -135,6 +153,7 @@ export interface Resolution {
   explanation: string;
   bare: CallShapeInfo;
   nested: CallShapeInfo | null;
+  pop: PopEffect;
   path: NestedHop[];
   relation: Relation | null;
   junction: string | null;
@@ -183,8 +202,11 @@ export function resolveTarget(
   previewId: string,
   params?: Params,
   sourceNav?: string,
+  /** The `pop: true` modifier. Only `navigate` reads it; see PopEffect. */
+  popMode = false,
 ): Resolution {
   const spec = getPreviewAction(previewId);
+  const popApplies = spec.acceptsPop === true && popMode;
 
   /**
    * An action starts at the navigator it was dispatched from. Normally that is
@@ -200,8 +222,16 @@ export function resolveTarget(
   const startNav = leafFirst[0] ? navIdFromKey(leafFirst[0].key) : 'the focused navigator';
   const effectiveSource = sourceResolved ? sourceNav : undefined;
 
-  const bareAction = spec.build(targetName, params);
+  const bareAction = withPopOption(spec.build(targetName, params), popApplies);
   const result = dryRun(session, bareAction, effectiveSource);
+
+  /**
+   * The same call with the modifier flipped, so the panel can say whether the
+   * flag makes any difference HERE - not only what it means in general.
+   */
+  const counterpart = spec.acceptsPop
+    ? dryRun(session, withPopOption(spec.build(targetName, params), !popApplies), effectiveSource)
+    : null;
 
   const trace: BubbleStep[] = leafFirst.map((nav, i) => {
     const visited = result.bubblePath.includes(nav.key);
@@ -231,7 +261,7 @@ export function resolveTarget(
     const hops = path.map((hop, i) => (i === path.length - 1 ? { ...hop, params } : hop));
     const nestedAction: NavAction = {
       type: 'NAVIGATE',
-      payload: { ...buildPayload(hops), ...(spec.pop ? { pop: true } : {}) },
+      payload: { ...buildPayload(hops), ...(popApplies ? { pop: true } : {}) },
     };
     // Only the first hop has to be reachable; each navigator hands the rest down.
     const firstHop = dryRun(session, { type: 'NAVIGATE', payload: { name: path[0].name } }, effectiveSource);
@@ -317,6 +347,7 @@ export function resolveTarget(
           : '') + explanationFor(session, spec, result, trace, geo),
     bare,
     nested,
+    pop: popEffect(session, spec, popMode, popApplies, targetName, result, counterpart),
     path,
     relation,
     junction,
@@ -325,6 +356,120 @@ export function resolveTarget(
     recommendation: bareOk ? 'bare' : nestedOk ? 'nested' : 'none',
     sourceNav: sourceNav ?? null,
     sourceResolved,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The pop modifier                                                    */
+/* ------------------------------------------------------------------ */
+
+const withPopOption = (action: NavAction, on: boolean): NavAction =>
+  on && action.type === 'NAVIGATE' ? { ...action, payload: { ...action.payload, pop: true } } : action;
+
+const navAt = (root: NavState, key: string | null) => (key ? (navigatorPath(root, key)?.at(-1) ?? null) : null);
+
+function popEffect(
+  session: SessionState,
+  spec: PreviewActionSpec,
+  on: boolean,
+  applied: boolean,
+  targetName: string,
+  chosen: ReturnType<typeof dryRun>,
+  counterpart: ReturnType<typeof dryRun> | null,
+): PopEffect {
+  const accepted = spec.acceptsPop === true;
+
+  /* ---- actions that have no such option ---- */
+  if (!accepted || !counterpart) {
+    const unwinds = spec.id === 'popTo' || spec.id === 'pop' || spec.id === 'popToTop' || spec.id === 'goBack';
+    return {
+      on,
+      accepted,
+      changes: false,
+      note: unwinds
+        ? `${spec.label} already unwinds the stack. pop: true exists to give navigate() that behaviour, so it is not an option on ` +
+          `${spec.label} at all and the modifier is ignored while this action is previewed.`
+        : `pop is an option of navigate only - navigate(name, params, { pop: true }). ${spec.label} takes no such option, so the ` +
+          'modifier is ignored while this action is previewed. It still applies to the navigate buttons below.',
+    };
+  }
+
+  const withPop = applied ? chosen : counterpart;
+  const plain = applied ? counterpart : chosen;
+  const changes = withPop.handledBy !== plain.handledBy || JSON.stringify(withPop.state) !== JSON.stringify(plain.state);
+
+  /* ---- no difference from here; WHY is the useful part ---- */
+  if (!changes) {
+    const handler = navAt(session.root, withPop.handledBy);
+
+    if (!handler) {
+      return {
+        on,
+        accepted,
+        changes,
+        note:
+          'Nothing handles this call in either form. The option only tells a stack router to roll back to a screen it already has; ' +
+          'it cannot make an unreachable name reachable.',
+      };
+    }
+    if (handler.type !== 'stack') {
+      return {
+        on,
+        accepted,
+        changes,
+        note:
+          `${withPop.handledBy} is a ${handler.type} navigator, and only the stack router reads the pop option. A ${handler.type} ` +
+          'switch moves an index and never appended anything, so there is nothing to pop back to and no duplicate to avoid.',
+      };
+    }
+    if (handler.routes[handler.index]?.name === targetName) {
+      return {
+        on,
+        accepted,
+        changes,
+        note:
+          `'${targetName}' is already the focused route of ${withPop.handledBy}, and navigate() never pushes over itself in either ` +
+          'version. Both forms do the same thing here: params only, no push.',
+      };
+    }
+    return {
+      on,
+      accepted,
+      changes,
+      note:
+        `${withPop.handledBy} has no '${targetName}' in its routes yet, so there is nothing to pop back TO - the screen is pushed ` +
+        'either way. The option starts to matter on the way back, once this branch is in the array behind you.',
+    };
+  }
+
+  /* ---- it does change things: say exactly how, from the verdicts ---- */
+  const refocused = withPop.verdicts.find((v) => v.outcome === 'refocused');
+  const removed = withPop.verdicts.filter((v) => v.outcome === 'removed');
+  const added = plain.verdicts.find((v) => v.outcome === 'added');
+  const after = navAt(withPop.state, withPop.handledBy);
+  const at = refocused && after ? after.routes.findIndex((r) => r.key === refocused.key) : -1;
+
+  if (refocused) {
+    return {
+      on,
+      accepted,
+      changes,
+      note:
+        `With it, ${withPop.handledBy} rolls back to the '${refocused.name}' it already holds${at >= 0 ? ` at index ${at}` : ''} - ` +
+        `same key (${refocused.key}), same array position, nested state intact - and unmounts the ` +
+        `${removed.length} screen${removed.length === 1 ? '' : 's'} above it` +
+        `${removed.length ? ` (${removed.map((v) => v.name).join(', ')})` : ''}. Without it, v7 pushes a SECOND ` +
+        `'${added?.name ?? targetName}' and leaves the first one mounted below, still holding the state you expected to come back to.`,
+    };
+  }
+
+  return {
+    on,
+    accepted,
+    changes,
+    note:
+      `The two forms diverge here: with the option ${withPop.handledBy ?? 'nothing'} takes it, without it ` +
+      `${plain.handledBy ?? 'nothing'} does. Dispatch each and compare the state tree.`,
   };
 }
 
