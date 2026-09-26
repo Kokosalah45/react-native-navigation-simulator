@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import type { NavAction, Params } from '../engine/types';
+import type { NavAction, NavState, Params } from '../engine/types';
 import { previewLifecycle, type LifecyclePreview, type SessionState } from '../engine/session';
 import { buildPayload, formatPayload, type NestedHop } from '../engine/nested';
 import { resolveTarget } from '../engine/resolve';
+import { focusedNavigators, navigatorPath } from '../engine/NavigatorEngine';
+import { capabilities, chainTypes, type Capability } from '../engine/capabilities';
 import { BubblePanel } from './BubblePanel';
 import { CodeBlock } from './CodeBlock';
 import { InfoTip, Tooltip } from './Tooltip';
@@ -105,6 +107,23 @@ export function CommandCenter({ session, dispatch }: Props) {
     const code = formatPayload(hops);
     return sourceNav ? code.replace(/^navigation\./, `navigation.getParent('${sourceNav}').`) : code;
   }, [isNestable, path, params, initialFalse, sourceNav]);
+
+  /**
+   * Which methods this navigation object actually has.
+   *
+   * The chain is the same one the action would bubble along, so picking a
+   * "dispatch from" navigator changes the answer exactly as getParent() does in
+   * a real app: you get that navigator's methods and its parents', not the
+   * focused screen's.
+   */
+  const chain = useMemo(
+    () => (sourceNav ? navigatorPath(session.root, sourceNav) : null) ?? focusedNavigators(session.root),
+    [session.root, sourceNav],
+  );
+  const caps = useMemo(() => capabilities(chain), [chain]);
+  const present = useMemo(() => chainTypes(chain), [chain]);
+  /** The nearest jumpTo provider IS the drawer, so one group covers both. */
+  const sameProvider = caps.JUMP_TO.ok && caps.JUMP_TO.from === caps.OPEN_DRAWER.from;
 
   const go = (action: NavAction) => dispatch(action, sourceNav || undefined);
 
@@ -242,6 +261,7 @@ export function CommandCenter({ session, dispatch }: Props) {
         previewId={previewId}
         onPreviewChange={setPreviewId}
         dispatch={dispatch}
+        caps={caps}
       />
 
       {/* ---------------- nested navigation ---------------- */}
@@ -294,69 +314,30 @@ export function CommandCenter({ session, dispatch }: Props) {
         </div>
       </div>
 
-      {/* ---------------- stack actions ---------------- */}
-      <Group title="Stack actions">
+      {/**
+        * Grouped the way the docs group them: a core set every navigator
+        * provides, then the navigator-specific ones. A group only appears when
+        * some navigator on the chain actually provides it, so what is on screen
+        * is what is on the navigation object.
+        */}
+      <Group title="Every navigator" note={`from ${chain.at(-1)?.key ?? 'the focused navigator'}`}>
         <Cmd
           label={`navigate('${selected}'${popOn ? ', { pop: true }' : ''})`}
           tone="primary"
           tip={
             session.version === 'v7'
-              ? 'v7 in a stack, per the docs, in order: (1) already on a screen with this name → update its params, no push; (2) different screen → push it; (3) getId matches another screen → bring that one to focus and update params (not simulated here); (4) otherwise push. In a tab or drawer it just switches to the screen.'
+              ? 'v7 in a stack, per the docs, in order: (1) already on a screen with this name -> update its params, no push; (2) different screen -> push it; (3) getId matches another screen -> bring that one to focus and update params (not simulated here); (4) otherwise push. In a tab or drawer it just switches to the screen.'
               : 'v6: if the screen exists anywhere in the stack, everything above it is destroyed and focus drops back to it, in place. Otherwise it is pushed. This is what navigateDeprecated() still does in v7.'
           }
           preview={previews.navigate}
           onClick={() => go(acts.navigate)}
         />
         <Cmd
-          label={`push('${selected}')`}
-          tip="Always appends a brand-new instance with a fresh key, even when the same screen is already in the stack. This is how you get two Profiles in one stack."
-          preview={previews.push}
-          onClick={() => go(acts.push)}
+          label="goBack()"
+          tip="Dispatches GO_BACK. Whichever navigator can handle it first wins - which is why back inside a nested stack pops that stack rather than switching tabs."
+          preview={previews.goBack}
+          onClick={() => go(acts.goBack)}
         />
-        <Cmd
-          label={`pop(${popCount})`}
-          tip="Truncates the routes array by n entries. The screens removed are unmounted and their local state is destroyed."
-          preview={previews.pop}
-          onClick={() => go(acts.pop)}
-          trailing={
-            <input
-              type="number"
-              min={1}
-              max={9}
-              value={popCount}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setPopCount(Math.max(1, Math.min(9, Number(e.target.value) || 1)))}
-              className="mono ml-1 w-9 rounded border border-ink-600 bg-ink-950 px-1 py-0.5 text-[10px] text-ink-200 outline-none"
-            />
-          }
-        />
-        <Cmd
-          label={`popTo('${selected}')`}
-          badge="v7"
-          tone={session.version === 'v6' ? 'danger' : 'default'}
-          tip={
-            session.version === 'v6'
-              ? 'StackActions.popTo did not exist in v6. Dispatching it here shows the failure you would get.'
-              : session.options.strictPopTo
-                ? 'Strict mode: rolls back to an existing instance, and errors if the screen is not already in the stack.'
-                : 'Real v7 behaviour: rolls back to an existing instance, or - if absent - pops the current screen and adds the target.'
-          }
-          preview={previews.popTo}
-          onClick={() => go(acts.popTo)}
-        />
-        <Cmd
-          label="popToTop()"
-          tip="Collapses the stack to routes[0]. The bottom route keeps its key and its state; everything above is destroyed in one dispatch."
-          preview={previews.popToTop}
-          onClick={() => go(acts.popToTop)}
-        />
-        <Cmd
-          label={`replace('${selected}')`}
-          tip="Swaps the entry at the current index. Depth is unchanged, but the key changes - so the old screen unmounts and you cannot go back to it."
-          preview={previews.replace}
-          onClick={() => go(acts.replace)}
-        />
-        <Cmd label="goBack()" tip="Dispatches GO_BACK. Whichever navigator can handle it first wins - which is why back inside a nested stack pops that stack rather than switching tabs." preview={previews.goBack} onClick={() => go(acts.goBack)} />
         <Cmd
           label={`setParams(${paramsText.trim() || '{}'})`}
           tip="Shallow-merges into the FOCUSED route's params, like React's setState. The key is untouched, so nothing remounts - v7 produces a new frozen state object rather than mutating the old one."
@@ -381,18 +362,104 @@ export function CommandCenter({ session, dispatch }: Props) {
         )}
       </Group>
 
-      {/* ---------------- tab / drawer actions ---------------- */}
-      <Group title="Tab & drawer actions">
-        <Cmd
-          label={`jumpTo('${selected}')`}
-          tip="Tab-only action: moves index without adding or removing routes. Dispatched from a nested stack it bubbles up to the tab navigator."
-          preview={previews.jumpTo}
-          onClick={() => go(acts.jumpTo)}
-        />
-        <Cmd label="openDrawer()" tip="Adds a { type: 'drawer', status: 'open' } entry to the navigator history. No route changes, and the screen behind stays focused." preview={previews.openDrawer} onClick={() => go(acts.openDrawer)} />
-        <Cmd label="closeDrawer()" tip="Removes the drawer history entry." preview={previews.closeDrawer} onClick={() => go(acts.closeDrawer)} />
-        <Cmd label="toggleDrawer()" tip="Open or close depending on the current history." preview={previews.toggleDrawer} onClick={() => go(acts.toggleDrawer)} />
-      </Group>
+      {/* Stack-specific: "several alternatives to navigate and goBack are provided". */}
+      {caps.PUSH.ok ? (
+        <Group title="Stack methods" note={inheritedNote(caps.PUSH)}>
+          <Cmd
+            label={`push('${selected}')`}
+            tip="Always appends a brand-new instance with a fresh key, even when the same screen is already in the stack. This is how you get two Profiles in one stack."
+            preview={previews.push}
+            onClick={() => go(acts.push)}
+          />
+          <Cmd
+            label={`pop(${popCount})`}
+            tip="Truncates the routes array by n entries. The screens removed are unmounted and their local state is destroyed."
+            preview={previews.pop}
+            onClick={() => go(acts.pop)}
+            trailing={
+              <input
+                type="number"
+                min={1}
+                max={9}
+                value={popCount}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => setPopCount(Math.max(1, Math.min(9, Number(e.target.value) || 1)))}
+                className="mono ml-1 w-9 rounded border border-ink-600 bg-ink-950 px-1 py-0.5 text-[10px] text-ink-200 outline-none"
+              />
+            }
+          />
+          <Cmd
+            label={`popTo('${selected}')`}
+            badge="v7"
+            tone={session.version === 'v6' ? 'danger' : 'default'}
+            tip={
+              session.version === 'v6'
+                ? 'StackActions.popTo did not exist in v6. Dispatching it here shows the failure you would get.'
+                : session.options.strictPopTo
+                  ? 'Strict mode: rolls back to an existing instance, and errors if the screen is not already in the stack.'
+                  : 'Real v7 behaviour: rolls back to an existing instance, or - if absent - pops the current screen and adds the target.'
+            }
+            preview={previews.popTo}
+            onClick={() => go(acts.popTo)}
+          />
+          <Cmd
+            label="popToTop()"
+            tip="Collapses the stack to routes[0]. The bottom route keeps its key and its state; everything above is destroyed in one dispatch."
+            preview={previews.popToTop}
+            onClick={() => go(acts.popToTop)}
+          />
+          <Cmd
+            label={`replace('${selected}')`}
+            tip="Swaps the entry at the current index. Depth is unchanged, but the key changes - so the old screen unmounts and you cannot go back to it."
+            preview={previews.replace}
+            onClick={() => go(acts.replace)}
+          />
+        </Group>
+      ) : (
+        <Missing types={['stack']} present={present} names={['push', 'pop', 'popTo', 'popToTop', 'replace']} reason={caps.PUSH.reason} />
+      )}
+
+      {/**
+        * A drawer is a tab router underneath, so it answers jumpTo as well as
+        * the drawer methods - the docs list jumpTo under both. When a tab sits
+        * nearer than the drawer they are two different providers, and saying so
+        * is the whole point of the note, so they get a group each.
+        */}
+      {caps.JUMP_TO.ok && (
+        <Group
+          title={sameProvider ? 'Drawer methods' : 'Tab methods'}
+          note={inheritedNote(caps.JUMP_TO)}
+        >
+          <Cmd
+            label={`jumpTo('${selected}')`}
+            tip="Tab-only action: moves index without adding or removing routes. Dispatched from a nested stack it bubbles up to the tab navigator."
+            preview={previews.jumpTo}
+            onClick={() => go(acts.jumpTo)}
+          />
+          {sameProvider && (
+            <>
+              <Cmd label="openDrawer()" tip="Adds a { type: 'drawer', status: 'open' } entry to the navigator history. No route changes, and the screen behind stays focused." preview={previews.openDrawer} onClick={() => go(acts.openDrawer)} />
+              <Cmd label="closeDrawer()" tip="Removes the drawer history entry." preview={previews.closeDrawer} onClick={() => go(acts.closeDrawer)} />
+              <Cmd label="toggleDrawer()" tip="Open or close depending on the current history." preview={previews.toggleDrawer} onClick={() => go(acts.toggleDrawer)} />
+            </>
+          )}
+        </Group>
+      )}
+
+      {caps.OPEN_DRAWER.ok && !sameProvider && (
+        <Group title="Drawer methods" note={inheritedNote(caps.OPEN_DRAWER)}>
+              <Cmd label="openDrawer()" tip="Adds a { type: 'drawer', status: 'open' } entry to the navigator history. No route changes, and the screen behind stays focused." preview={previews.openDrawer} onClick={() => go(acts.openDrawer)} />
+              <Cmd label="closeDrawer()" tip="Removes the drawer history entry." preview={previews.closeDrawer} onClick={() => go(acts.closeDrawer)} />
+              <Cmd label="toggleDrawer()" tip="Open or close depending on the current history." preview={previews.toggleDrawer} onClick={() => go(acts.toggleDrawer)} />
+        </Group>
+      )}
+
+      {!caps.JUMP_TO.ok && (
+        <Missing types={['tab', 'drawer']} present={present} names={['jumpTo', 'openDrawer', 'closeDrawer', 'toggleDrawer']} reason={caps.JUMP_TO.reason} />
+      )}
+      {caps.JUMP_TO.ok && !caps.OPEN_DRAWER.ok && (
+        <Missing types={['drawer']} present={present} names={['openDrawer', 'closeDrawer', 'toggleDrawer']} reason={caps.OPEN_DRAWER.reason} />
+      )}
 
       {/* ---------------- reset ---------------- */}
       <Group title="reset()">
@@ -422,11 +489,65 @@ export function CommandCenter({ session, dispatch }: Props) {
 
 /* ------------------------------------------------------------------ */
 
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+function Group({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-300">{title}</h4>
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <h4 className="text-[10px] font-medium uppercase tracking-wider text-ink-300">{title}</h4>
+        {note && <span className="mono truncate text-[9px] text-ink-500">{note}</span>}
+      </div>
       <div className="grid grid-cols-2 gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+const inheritedNote = (cap: Capability) =>
+  cap.from ? (cap.levelsUp === 0 ? `from ${cap.from}` : `inherited from ${cap.from}, ${cap.levelsUp} up`) : undefined;
+
+/**
+ * Methods that are NOT on this navigation object, named rather than silently
+ * absent. Which methods you have is a consequence of the layout, so the
+ * disappearance is the lesson - but only if you can see what disappeared.
+ */
+function Missing({
+  types,
+  present,
+  names,
+  reason,
+}: {
+  types: NavState['type'][];
+  present: NavState['type'][];
+  names: string[];
+  reason: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-dashed border-ink-700/70 px-3 py-1.5">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-1.5 text-left">
+        <span className="mono text-[9.5px] text-ink-500">
+          {names.length} {types.join('/')} method{names.length === 1 ? '' : 's'} not available here
+        </span>
+        <span className="mono ml-auto shrink-0 text-[9px] text-ink-500">{open ? 'less' : 'why'}</span>
+      </button>
+
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          <p className="mono text-[9.5px] leading-relaxed text-ink-500">
+            {names.map((n) => (
+              <span key={n} className="mr-2 line-through">
+                {n}()
+              </span>
+            ))}
+          </p>
+          <p className="text-[10.5px] leading-relaxed text-ink-300">{reason}</p>
+          <p className="text-[10.5px] leading-relaxed text-ink-300">
+            The focus chain is {present.join(' inside ')}
+            {present.length === 1 ? ' — one navigator' : ''}. Put {types.map((t) => `a ${t}`).join(' or ')} navigator above this
+            screen and these appear, because navigator-specific methods are inherited by every navigator nested inside it.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

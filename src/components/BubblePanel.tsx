@@ -1,5 +1,6 @@
 import type { NavAction } from '../engine/types';
 import type { SessionState } from '../engine/session';
+import type { Capability } from '../engine/capabilities';
 import { getNavigatorBlueprint } from '../engine/blueprint';
 import { PREVIEW_ACTIONS, type CallShapeInfo, type Resolution } from '../engine/resolve';
 import { CodeLine } from './CodeBlock';
@@ -12,6 +13,8 @@ interface Props {
   previewId: string;
   onPreviewChange: (id: string) => void;
   dispatch: (action: NavAction, source?: string) => void;
+  /** Which methods this navigation object has, keyed by action type. */
+  caps: Record<NavAction['type'], Capability>;
 }
 
 /**
@@ -23,7 +26,7 @@ interface Props {
  * bubbles by its own rules: a tab router has no handler for push at all, while
  * jumpTo is invisible to a stack.
  */
-export function BubblePanel({ session, target, resolution, previewId, onPreviewChange, dispatch }: Props) {
+export function BubblePanel({ session, target, resolution, previewId, onPreviewChange, dispatch, caps }: Props) {
   const { trace, spec, handledBy, headline, explanation, bare, nested, relation, pop } = resolution;
 
   const verdictTone =
@@ -59,12 +62,16 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
           onChange={(e) => onPreviewChange(e.target.value)}
           className="mono ml-auto rounded-md border border-ink-700 bg-ink-900 px-1.5 py-0.5 text-[10px] text-ink-200 outline-none focus:border-focus-400"
         >
-          {available.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.label}
-              {a.v7Only ? ' (v7)' : ''}
-            </option>
-          ))}
+          {available.map((a) => {
+            const has = caps[a.build('_', undefined).type]?.ok ?? true;
+            return (
+              <option key={a.id} value={a.id}>
+                {a.label}
+                {a.v7Only ? ' (v7)' : ''}
+                {has ? '' : ' — not on this screen'}
+              </option>
+            );
+          })}
         </select>
       </div>
 

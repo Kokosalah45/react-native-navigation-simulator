@@ -3,6 +3,7 @@ import { navIdFromKey, restoreKeyCounter, snapshotKeyCounter } from './blueprint
 import { dispatch, focusedNavigators, navigatorPath } from './NavigatorEngine';
 import { describeAction, type SessionState } from './session';
 import { buildPayload, collectNavKeys, junctionOf, pathToScreen, trimToReachable, type NestedHop } from './nested';
+import { HANDLED_BY } from './capabilities';
 
 /**
  * "Would this action be handled from here?"
@@ -83,18 +84,14 @@ export const PREVIEW_ACTIONS: PreviewActionSpec[] = [
 
 export const getPreviewAction = (id: string) => PREVIEW_ACTIONS.find((a) => a.id === id) ?? PREVIEW_ACTIONS[0];
 
-/** Which navigator types have a handler for this action at all. */
-const ACCEPTED_BY: Record<string, NavState['type'][]> = {
-  navigate: ['stack', 'tab', 'drawer'],
-  push: ['stack'],
-  popTo: ['stack'],
-  replace: ['stack'],
-  pop: ['stack'],
-  popToTop: ['stack'],
-  jumpTo: ['tab', 'drawer'],
-  goBack: ['stack', 'tab', 'drawer'],
-  openDrawer: ['drawer'],
-};
+/**
+ * Which navigator types have a handler for this action at all.
+ *
+ * Read off the action the spec builds rather than kept as a second table beside
+ * HANDLED_BY, so the resolver and the command center can never disagree about
+ * which methods exist.
+ */
+const acceptedBy = (spec: PreviewActionSpec) => HANDLED_BY[spec.build('_', undefined).type];
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -478,7 +475,7 @@ function popEffect(
 /* ------------------------------------------------------------------ */
 
 function declineNote(nav: NavState, spec: PreviewActionSpec, targetName: string) {
-  const accepted = ACCEPTED_BY[spec.id] ?? ['stack', 'tab', 'drawer'];
+  const accepted = acceptedBy(spec);
   if (!accepted.includes(nav.type)) return `a ${nav.type} router has no handler for ${spec.label}`;
   if (spec.needsName && !nav.routeNames.includes(targetName)) return `routeNames has no '${targetName}'`;
   return 'nothing it could do in its current state';
@@ -572,7 +569,7 @@ function explanationFor(
    * it. The action is simply not in that navigator's vocabulary.
    */
   if (geo.failure === 'action-type') {
-    const accepted = ACCEPTED_BY[spec.id] ?? [];
+    const accepted = acceptedBy(spec);
     return (
       `This is not about where '${targetName}' lives - ${geo.declaredOn} declares it, and the action does reach that navigator. ` +
       `But ${geo.declaredOn} is a ${geo.declaredOnType} navigator and ${spec.label} is only handled by a ${accepted.join(' or ')} ` +
@@ -617,7 +614,7 @@ function explanationFor(
 }
 
 function noHandlerHint(spec: PreviewActionSpec, chain: NavState[]) {
-  const accepted = ACCEPTED_BY[spec.id] ?? [];
+  const accepted = acceptedBy(spec);
   const kinds = chain.map((n) => n.type);
 
   if (accepted.length && !accepted.some((t) => kinds.includes(t))) {

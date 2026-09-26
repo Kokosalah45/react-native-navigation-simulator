@@ -269,6 +269,48 @@ export const SECTIONS: Section[] = [
           'ON refuses to instantiate a screen that is not already in the stack and raises a simulation error. OFF pops the current screen and adds the target, which is the documented v7 behaviour.',
       },
       {
+        id: 'D10',
+        title: 'Only the methods this screen actually has',
+        steps: [
+          'Load Native Stack, then Bottom Tabs, then Drawer, then Drawer + Tabs + Stacks',
+          'Read the command groups each time',
+        ],
+        expect:
+          'Native Stack shows "Every navigator" and "Stack methods", with jumpTo and the three drawer methods collapsed into ' +
+          '"4 tab/drawer methods not available here". Bottom Tabs drops the five stack methods instead. Drawer shows ONE group ' +
+          'holding jumpTo plus the three drawer methods, because a drawer provides jumpTo too. Drawer + Tabs + Stacks shows all ' +
+          'four groups and nothing missing.',
+        why:
+          'Which methods you have is a consequence of the layout, and offering push() on a screen that has no stack anywhere ' +
+          'above it teaches the opposite of the truth.',
+      },
+      {
+        id: 'D11',
+        title: 'Inherited methods name the navigator they came from',
+        steps: ['On Drawer + Tabs + Stacks, focus Timeline (inside stack-home, inside tab-main, inside drawer-root)'],
+        expect:
+          '"Stack methods · from stack-home#9" — its own navigator. "Tab methods · inherited from tab-main#7, 1 up" and ' +
+          '"Drawer methods · inherited from drawer-root#3, 2 up" — two different providers, named separately rather than lumped ' +
+          'under one heading.',
+        why:
+          'From the nesting docs: navigator-specific methods "are available in the navigators nested inside", so a screen three ' +
+          'levels down holds methods from three different navigators. Which one each came from is the part worth seeing.',
+      },
+      {
+        id: 'D12',
+        title: 'getParent() changes which methods exist',
+        steps: [
+          'On Drawer + Tabs + Stacks with Timeline focused, note that all four groups are present',
+          'Set "dispatch from" to getParent → drawer-root',
+        ],
+        expect:
+          'The five stack methods and the tab methods disappear, and the drawer methods stop being "inherited". Same layout, same ' +
+          'focused screen — the navigation object you are holding is a different one.',
+        why:
+          'drawer-root is the root, so its chain is just itself. This is the check that proves availability follows the dispatch ' +
+          'chain rather than the layout as a whole.',
+      },
+      {
         id: 'D3',
         title: 'Tabs are lazy but never unmount',
         steps: ['Load Drawer + Tabs + Stacks and touch nothing', 'Then focus one unvisited tab'],
