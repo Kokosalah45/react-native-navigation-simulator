@@ -253,7 +253,7 @@ export function CommandCenter({ session, dispatch }: Props) {
           <>
             <CodeBlock code={nestedPreview ?? ''} language="jsx" className="mb-1.5 !p-2 !text-[9.5px]" />
             <Cmd
-              label={`navigate nested → ${selected}`}
+              label={`navigate nested → ${selected}${popMode ? " { pop: true }" : ""}`}
               tone="primary"
               tip="Dispatches the payload above with your params and initial flag applied, whether or not the nested payload checkbox is ticked."
               preview={previews.nested}
