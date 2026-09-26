@@ -15,6 +15,8 @@ interface Props {
   dispatch: (action: NavAction, source?: string) => void;
   /** Which methods this navigation object has, keyed by action type. */
   caps: Record<NavAction['type'], Capability>;
+  /** Hide the verdict and the call ranking; keep the trace. */
+  blindfold?: boolean;
 }
 
 /**
@@ -26,7 +28,7 @@ interface Props {
  * bubbles by its own rules: a tab router has no handler for push at all, while
  * jumpTo is invisible to a stack.
  */
-export function BubblePanel({ session, target, resolution, previewId, onPreviewChange, dispatch, caps }: Props) {
+export function BubblePanel({ session, target, resolution, previewId, onPreviewChange, dispatch, caps, blindfold = false }: Props) {
   const { trace, spec, handledBy, headline, explanation, bare, nested, relation, pop } = resolution;
 
   const verdictTone =
@@ -119,6 +121,14 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
         )}
       </div>
 
+      {blindfold ? (
+        <div className="mb-2 rounded border border-ink-700 border-dashed bg-ink-900/60 px-2 py-1.5">
+          <p className="mono text-[9px] uppercase tracking-wider text-ink-500">verdict hidden while this step is graded</p>
+          <p className="mt-0.5 text-[10.5px] leading-relaxed text-ink-300">
+            The trace above still shows you which navigator sees what — that is the part you reason with.
+          </p>
+        </div>
+      ) : (
       <div className={`mb-2 rounded border px-2 py-1.5 ${verdictTone}`}>
         <p className={`mb-1 text-[11px] font-semibold ${headlineTone}`}>{headline}</p>
         <p className="text-[10.5px] leading-relaxed text-ink-200">{explanation}</p>
@@ -128,12 +138,13 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
           </p>
         )}
       </div>
+      )}
 
       {/**
         * The pop modifier, but only when it is worth a line: ticked, or unticked
         * while it would change the outcome. Silent when it is off and irrelevant.
         */}
-      {(pop.on || pop.changes) && (
+      {!blindfold && (pop.on || pop.changes) && (
         <div
           className={`mb-2 rounded border px-2 py-1.5 ${
             !pop.accepted
@@ -166,9 +177,9 @@ export function BubblePanel({ session, target, resolution, previewId, onPreviewC
       )}
 
       <div className="space-y-1.5">
-        <CallShape info={bare} label={spec.needsName ? 'bare' : spec.label} onRun={() => dispatch(bare.action)} />
+        <CallShape info={bare} label={spec.needsName ? 'bare' : spec.label} onRun={() => dispatch(bare.action)} blindfold={blindfold} />
         {nested && (
-          <CallShape info={nested} label={`nested · ${nested.hops} levels`} onRun={() => dispatch(nested.action)} />
+          <CallShape info={nested} label={`nested · ${nested.hops} levels`} onRun={() => dispatch(nested.action)} blindfold={blindfold} />
         )}
         {!nested && !spec.supportsNested && spec.needsName && (
           <p className="text-[10px] leading-snug text-ink-300">
@@ -189,15 +200,25 @@ const CALL_STATUS = {
   redundant: { mark: '~', mark_tone: 'text-ink-300', box: 'border-ink-700 bg-ink-850 opacity-70 hover:opacity-100' },
 } as const;
 
-function CallShape({ info, label, onRun }: { info: CallShapeInfo; label: string; onRun: () => void }) {
-  const tone = CALL_STATUS[info.status];
+function CallShape({
+  info,
+  label,
+  onRun,
+  blindfold = false,
+}: {
+  info: CallShapeInfo;
+  label: string;
+  onRun: () => void;
+  blindfold?: boolean;
+}) {
+  const tone = CALL_STATUS[blindfold ? 'redundant' : info.status];
   return (
     <div className={`rounded-md border transition-colors ${tone.box}`}>
       <div className="flex items-center gap-1.5 px-2 pt-1.5">
-        <span className={`mono text-[9px] font-bold ${tone.mark_tone}`}>{tone.mark}</span>
+        <span className={`mono text-[9px] font-bold ${tone.mark_tone}`}>{blindfold ? '?' : tone.mark}</span>
         <span className="mono text-[9px] uppercase tracking-wider text-ink-300">{label}</span>
-        {info.handledBy && <span className="mono text-[9px] text-focus-400">→ {info.handledBy}</span>}
-        <InfoTip label={info.reason} className="ml-auto" />
+        {info.handledBy && !blindfold && <span className="mono text-[9px] text-focus-400">→ {info.handledBy}</span>}
+        {!blindfold && <InfoTip label={info.reason} className="ml-auto" />}
       </div>
       {/* The code is selectable and scrollable; only the button runs it. */}
       <button onClick={onRun} title="Dispatch this call" className="block w-full px-2 pb-1.5 pt-0.5 text-left">

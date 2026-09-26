@@ -12,6 +12,15 @@ import { InfoTip, Tooltip } from './Tooltip';
 interface Props {
   session: SessionState;
   dispatch: (action: NavAction, source?: string) => void;
+  /**
+   * Hide the resolver's verdict and its call-shape ranking.
+   *
+   * During a graded quiz beat those ARE the answer - the panel prints "use
+   * this" next to the right call. The bubbling trace stays visible, because
+   * that is the reasoning tool: where the action can reach and who declines it.
+   * Working it out is the exercise; being told is not.
+   */
+  blindfold?: boolean;
 }
 
 interface ScreenOption {
@@ -26,7 +35,7 @@ interface ScreenOption {
  * in React Navigation where `navigation.push(...)` is sugar over
  * `dispatch(StackActions.push(...))`.
  */
-export function CommandCenter({ session, dispatch }: Props) {
+export function CommandCenter({ session, dispatch, blindfold = false }: Props) {
   const [target, setTarget] = useState<string>('');
   const [paramsText, setParamsText] = useState('{ "id": 7 }');
   const [popCount, setPopCount] = useState(1);
@@ -262,6 +271,7 @@ export function CommandCenter({ session, dispatch }: Props) {
         onPreviewChange={setPreviewId}
         dispatch={dispatch}
         caps={caps}
+        blindfold={blindfold}
       />
 
       {/* ---------------- nested navigation ---------------- */}

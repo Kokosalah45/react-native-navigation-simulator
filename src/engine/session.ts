@@ -111,6 +111,14 @@ export type SessionAction =
   | { type: 'setOption'; key: keyof Omit<EngineOptions, 'version'>; value: boolean }
   | { type: 'clearLog' }
   | { type: 'clearGhosts' }
+  /**
+   * Put a previously captured session back verbatim.
+   *
+   * Session state is immutable, so a quiz beat can hold the object it started
+   * from and hand it back for a retry. A wrong answer corrupts the state for
+   * every beat after it, so retry has to restore rather than replay.
+   */
+  | { type: 'restore'; state: SessionState }
   | { type: 'restart' };
 
 /* ------------------------------------------------------------------ */
@@ -266,6 +274,7 @@ export function initSession(preset: Preset, version: RNVersion, overrides?: Part
 /* ------------------------------------------------------------------ */
 
 export function sessionReducer(state: SessionState, event: SessionAction): SessionState {
+  if (event.type === 'restore') return event.state;
   switch (event.type) {
     case 'setPreset':
       return initSession(event.preset, state.version, { strictPopTo: state.options.strictPopTo });

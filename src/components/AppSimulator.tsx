@@ -12,20 +12,33 @@ import {
   saveLayouts,
 } from '../engine/layouts';
 import { LayoutBuilder } from './LayoutBuilder';
-import { initSession, sessionReducer } from '../engine/session';
+import { initSession, sessionReducer, type SessionState } from '../engine/session';
 import { PhoneCanvas } from './PhoneCanvas';
 import { CommandCenter } from './CommandCenter';
 import { VisualizerStack } from './VisualizerStack';
 import { EventLog } from './EventLog';
 import { CodePanel } from './CodePanel';
 import { Scenarios, type Scenario } from './Scenarios';
+import { QuizList, QuizPanel, type QuizRun } from './Quiz';
+import {
+  grade as gradeBeat,
+  loadProgress,
+  quizPreset,
+  saveProgress,
+  shape,
+  watchKeys,
+  type BeatScore,
+  type Quiz,
+  type QuizProgress,
+  type Watch,
+} from '../engine/quiz';
 import { ResizeHandle } from './ResizeHandle';
 import { useLayoutSizes, useMediaQuery, type LayoutSizes } from '../hooks/useLayoutSizes';
 
 /** Width of the collapsed config column. */
 const RAIL_W = 34;
 const RAIL_KEY = 'rn-nav-sim:rail';
-import { HintLabel, Tooltip } from './Tooltip';
+import { HintLabel, InfoTip, Tooltip } from './Tooltip';
 
 const GHOST_MS = 620;
 const STEP_MS = 1150;
@@ -33,6 +46,16 @@ const STEP_MS = 1150;
 export function AppSimulator() {
   const [session, send] = useReducer(sessionReducer, undefined, () => initSession(PRESETS[0], 'v7'));
   const [runner, setRunner] = useState<{ scenario: Scenario; step: number } | null>(null);
+
+  /* ------------------------------ quizzes ------------------------------ */
+  const [quiz, setQuiz] = useState<QuizRun | null>(null);
+  const [progress, setProgress] = useState<QuizProgress>({});
+  /**
+   * The session as the current beat found it, plus the keys that were alive
+   * then. Retry restores the first; `preserved` assertions are answered by the
+   * second. Session state is immutable, so holding the object is enough.
+   */
+  const beatStart = useRef<{ session: SessionState; watch: Watch } | null>(null);
   const ghostTimer = useRef<number | null>(null);
 
   const dispatch = useCallback((action: NavAction, source?: string) => send({ type: 'dispatch', action, source }), []);
@@ -43,6 +66,7 @@ export function AppSimulator() {
 
   useEffect(() => {
     setLayouts(loadLayouts());
+    setProgress(loadProgress());
   }, []);
 
   const persist = useCallback((next: CustomLayout[]) => {
@@ -109,6 +133,120 @@ export function AppSimulator() {
     );
     return () => window.clearTimeout(timer);
   }, [runner]);
+
+  /* ------------------------------------------------------------------ */
+  /* Quiz runner                                                         */
+  /* ------------------------------------------------------------------ */
+
+  const startQuiz = useCallback(
+    (q: Quiz) => {
+      send({ type: 'setPreset', preset: quizPreset(q, getPreset) });
+      if (q.version) send({ type: 'setVersion', version: q.version });
+      if (q.strictPopTo !== undefined) send({ type: 'setOption', key: 'strictPopTo', value: q.strictPopTo });
+      setQuiz({
+        quiz: q,
+        beat: 0,
+        grade: null,
+        matchedModel: false,
+        hintsTaken: 0,
+        attempts: 0,
+        scores: [],
+        revealed: false,
+        done: false,
+      });
+      // The preset lands in the next render; the beat opens against it there.
+      beatStart.current = null;
+    },
+    [],
+  );
+
+  /** Scripted beats play themselves; graded beats wait for the user. */
+  useEffect(() => {
+    if (!quiz || quiz.done) return;
+    const beat = quiz.quiz.beats[quiz.beat];
+    if (!beat) return;
+
+    // First render after setPreset: capture the ground truth for this beat.
+    if (!beatStart.current) {
+      beatStart.current = { session, watch: watchKeys(session.root) };
+    }
+    if (beat.mode !== 'scripted') return;
+
+    const timer = window.setTimeout(() => {
+      for (const action of beat.actions ?? []) send({ type: 'dispatch', action });
+      setQuiz((q) => {
+        if (!q) return q;
+        const next = q.beat + 1;
+        beatStart.current = null;
+        return { ...q, beat: next, grade: null, matchedModel: false, hintsTaken: 0, attempts: 0, revealed: false };
+      });
+    }, 520);
+    return () => window.clearTimeout(timer);
+    // Intentionally keyed on the beat, not on every session tick.
+  }, [quiz?.quiz.id, quiz?.beat, quiz?.done]);
+
+  /**
+   * Grade on the state the user produced, never on the call they typed.
+   *
+   * `matchedModel` additionally dry-runs the model answer from the same
+   * starting point and compares the shape, so the panel can distinguish
+   * "correct" from "correct, and the way I would have done it" without ever
+   * pattern-matching a call.
+   */
+  useEffect(() => {
+    if (!quiz || quiz.done || quiz.grade) return;
+    const beat = quiz.quiz.beats[quiz.beat];
+    const start = beatStart.current;
+    if (!beat || beat.mode !== 'graded' || !start || !beat.assert) return;
+    // Nothing dispatched yet for this beat.
+    if (session.journey.length <= start.session.journey.length) return;
+
+    const result = gradeBeat(session.root, start.watch, beat.assert);
+
+    let matched = false;
+    if (result.ok && beat.answer) {
+      /**
+       * Run the model answer through the REDUCER, not the raw engine.
+       *
+       * A nested payload is not one action - it is one NAVIGATE per level, and
+       * the splitting lives in the reducer. Dispatching the whole payload
+       * straight at the engine stops after the first hop, which made a correct
+       * nested answer look like a different route than the model. Same code
+       * path in, same code path out, so the comparison cannot drift.
+       */
+      const model = sessionReducer(start.session, { type: 'dispatch', action: beat.answer.action });
+      matched = shape(model.root) === shape(session.root);
+    }
+
+    setQuiz((q) => (q ? { ...q, grade: result, matchedModel: matched, attempts: q.attempts + 1 } : q));
+  }, [session.journey.length, quiz?.beat, quiz?.grade, quiz?.done]);
+
+  const quizRetry = useCallback(() => {
+    const start = beatStart.current;
+    if (!start) return;
+    send({ type: 'restore', state: start.session });
+    setQuiz((q) => (q ? { ...q, grade: null, matchedModel: false } : q));
+  }, []);
+
+  const quizNext = useCallback(() => {
+    setQuiz((q) => {
+      if (!q) return q;
+      const score: BeatScore = q.revealed ? 'hinted' : q.hintsTaken > 0 ? 'hinted' : q.attempts > 1 ? 'passed' : q.matchedModel ? 'clean' : 'passed';
+      const scores = [...q.scores, score];
+      const next = q.beat + 1;
+      const done = next >= q.quiz.beats.length;
+
+      if (done) {
+        setProgress((p) => {
+          const merged = { ...p, [q.quiz.id]: scores };
+          saveProgress(merged);
+          return merged;
+        });
+      }
+      beatStart.current = null;
+      return { ...q, beat: next, scores, done, grade: null, matchedModel: false, hintsTaken: 0, attempts: 0, revealed: false };
+    });
+  }, []);
 
   const runScenario = useCallback((scenario: Scenario) => {
     send({ type: 'setPreset', preset: getPreset(scenario.presetId) });
@@ -325,15 +463,35 @@ export function AppSimulator() {
         <div className={`flex min-h-0 flex-col gap-3 overflow-y-auto p-4 ${wide ? '' : 'min-h-[560px]'}`}>
           <PhoneCanvas session={session} dispatch={dispatch} />
 
-          <div>
-            <h3 className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-300">Guided scenarios</h3>
-            <Scenarios
-              activeId={runner?.scenario.id ?? null}
-              stepIndex={runner?.step ?? 0}
-              onRun={runScenario}
-              onStop={() => setRunner(null)}
+          {quiz ? (
+            <QuizPanel
+              run={quiz}
+              onHint={() => setQuiz((q) => (q ? { ...q, hintsTaken: q.hintsTaken + 1 } : q))}
+              onReveal={() => setQuiz((q) => (q ? { ...q, revealed: true } : q))}
+              onRetry={quizRetry}
+              onNext={quizNext}
+              onQuit={() => {
+                setQuiz(null);
+                beatStart.current = null;
+              }}
             />
-          </div>
+          ) : (
+            <div>
+              <h3 className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-ink-300">
+                Drills
+                <InfoTip label="You make the call; the engine grades the STATE you produced, not the call you typed. Several calls are right in some states and wrong in others, so matching call shapes would only teach recitation." />
+              </h3>
+              <QuizList progress={progress} onStart={startQuiz} />
+
+              <h3 className="mb-1.5 mt-3 text-[10px] font-medium uppercase tracking-wider text-ink-300">Guided scenarios</h3>
+              <Scenarios
+                activeId={runner?.scenario.id ?? null}
+                stepIndex={runner?.step ?? 0}
+                onRun={runScenario}
+                onStop={() => setRunner(null)}
+              />
+            </div>
+          )}
         </div>
 
         {wide && (
@@ -352,7 +510,11 @@ export function AppSimulator() {
             <Explanation session={session} />
           </div>
           <div className="p-4">
-            <CommandCenter session={session} dispatch={dispatch} />
+            <CommandCenter
+                session={session}
+                dispatch={dispatch}
+                blindfold={!!quiz && !quiz.done && quiz.quiz.beats[quiz.beat]?.mode === 'graded' && !quiz.grade}
+              />
           </div>
         </div>
 
